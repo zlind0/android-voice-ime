@@ -922,9 +922,9 @@ class VoiceImeOverlayView @JvmOverloads constructor(
                 canvas.drawPath(centerPath, centerHighlightPaint)
             } else {
                 when (currentAction) {
-                    RadialAction.GEMMA_POLISH_NORMAL ->
-                        drawRingSector(canvas, anchorX, anchorY, innerR, currentR, 225f, 45f, sectorHighlightPaint)
                     RadialAction.GEMMA_POLISH_FORMAL ->
+                        drawRingSector(canvas, anchorX, anchorY, innerR, currentR, 225f, 45f, sectorHighlightPaint)
+                    RadialAction.GEMMA_SCREENSHOT_CORRECTION ->
                         drawRingSector(canvas, anchorX, anchorY, innerR, currentR, 270f, 45f, sectorHighlightPaint)
                     RadialAction.GEMMA_SCREENSHOT_INSTRUCTION ->
                         drawRingSector(canvas, anchorX, anchorY, innerR, currentR, 315f, 45f, sectorHighlightPaint)
@@ -948,8 +948,8 @@ class VoiceImeOverlayView @JvmOverloads constructor(
 
         // Sector dividers & labels
         if (source == MicSource.WHISPER) {
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 90f, "拖到边缘取消")
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.30f, 90f, "松手识别")
+            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 90f, "取消")
+            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.30f, 90f, "普通识别")
         } else {
             for (angle in listOf(45f, 90f, 135f)) {
                 val (x1, y1) = RadialMenuGeometry.pointOnArc(anchorX, anchorY, innerR, angle)
@@ -957,10 +957,10 @@ class VoiceImeOverlayView @JvmOverloads constructor(
                 canvas.drawLine(x1, y1, x2, y2, dividerPaint)
             }
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 157.5f, "取消")
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 112.5f, "普通")
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 67.5f, "正式")
+            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 112.5f, "正式")
+            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 67.5f, "纠错")
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 22.5f, "指令")
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.28f, 90f, "普通转写")
+            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.28f, 90f, "正式润色")
         }
 
         // Floating action pill above disc (the tray draws its own pill while targeted)
@@ -968,8 +968,8 @@ class VoiceImeOverlayView @JvmOverloads constructor(
             val hintText = when (currentAction) {
                 RadialAction.CANCEL -> "松手取消本次语音"
                 RadialAction.WHISPER_TRANSCRIBE -> "正在聆听 · Whisper 原样输出"
-                RadialAction.GEMMA_POLISH_NORMAL -> "正在聆听 · 润色为普通表达"
                 RadialAction.GEMMA_POLISH_FORMAL -> "正在聆听 · 润色为正式书面语"
+                RadialAction.GEMMA_SCREENSHOT_CORRECTION -> "正在聆听 · 结合截屏纠正识别"
                 RadialAction.GEMMA_SCREENSHOT_INSTRUCTION -> "正在聆听 · 结合截屏执行指令"
                 RadialAction.NONE -> "正在聆听..."
             }
@@ -1204,7 +1204,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         currentAction = if (source == MicSource.WHISPER) {
             RadialAction.WHISPER_TRANSCRIBE
         } else {
-            RadialAction.GEMMA_POLISH_NORMAL
+            RadialAction.GEMMA_POLISH_FORMAL
         }
         isRadialExpanded = true
         voiceAmplitude = 0f

@@ -15,7 +15,7 @@ class PromptTemplatesTest {
 
     @Test
     fun savedPromptsOverrideDefaultsAndBlankFallsBack() {
-        val mode = VoiceMode.GEMMA_POLISH_NORMAL
+        val mode = VoiceMode.GEMMA_SCREENSHOT_CORRECTION
 
         assertEquals(
             "自定义系统提示词",

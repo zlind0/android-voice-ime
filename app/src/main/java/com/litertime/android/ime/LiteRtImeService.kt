@@ -383,8 +383,8 @@ class LiteRtImeService : InputMethodService() {
 
         val mode = when (action) {
             RadialAction.WHISPER_TRANSCRIBE -> VoiceMode.WHISPER_RAW
-            RadialAction.GEMMA_POLISH_NORMAL -> VoiceMode.GEMMA_POLISH_NORMAL
             RadialAction.GEMMA_POLISH_FORMAL -> VoiceMode.GEMMA_POLISH_FORMAL
+            RadialAction.GEMMA_SCREENSHOT_CORRECTION -> VoiceMode.GEMMA_SCREENSHOT_CORRECTION
             RadialAction.GEMMA_SCREENSHOT_INSTRUCTION -> VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION
             RadialAction.CANCEL, RadialAction.NONE -> return
         }
@@ -420,7 +420,9 @@ class LiteRtImeService : InputMethodService() {
             val wavFile = File(ipcDir, "$requestId.wav")
             var screenshotFile: File? = null
 
-            if (mode == VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION) {
+            val needsScreenshot = mode == VoiceMode.GEMMA_SCREENSHOT_CORRECTION ||
+                mode == VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION
+            if (needsScreenshot) {
                 if (!ScreenCaptureAccessibilityService.isReady()) {
                     commitGuard.complete(requestId)
                     overlayView.updateStatusBanner("", cancellable = false)

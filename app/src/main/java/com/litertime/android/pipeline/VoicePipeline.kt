@@ -5,8 +5,8 @@ import kotlinx.coroutines.flow.Flow
 
 enum class VoiceMode {
     WHISPER_RAW,
-    GEMMA_POLISH_NORMAL,
     GEMMA_POLISH_FORMAL,
+    GEMMA_SCREENSHOT_CORRECTION,
     GEMMA_SCREENSHOT_INSTRUCTION,
 }
 

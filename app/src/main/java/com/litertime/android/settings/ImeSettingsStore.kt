@@ -37,21 +37,21 @@ data class ImeSettings(
     val systemPromptOverride: String = "",
     /** Per-mode user prompt overrides. Blank keeps the built-in default for that mode. */
     val userPromptWhisperRaw: String = "",
-    val userPromptPolishNormal: String = "",
     val userPromptPolishFormal: String = "",
+    val userPromptScreenshotCorrection: String = "",
     val userPromptScreenshotInstruction: String = "",
 ) {
     fun userPromptOverride(mode: VoiceMode): String = when (mode) {
         VoiceMode.WHISPER_RAW -> userPromptWhisperRaw
-        VoiceMode.GEMMA_POLISH_NORMAL -> userPromptPolishNormal
         VoiceMode.GEMMA_POLISH_FORMAL -> userPromptPolishFormal
+        VoiceMode.GEMMA_SCREENSHOT_CORRECTION -> userPromptScreenshotCorrection
         VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION -> userPromptScreenshotInstruction
     }
 
     fun withUserPromptOverride(mode: VoiceMode, prompt: String): ImeSettings = when (mode) {
         VoiceMode.WHISPER_RAW -> copy(userPromptWhisperRaw = prompt)
-        VoiceMode.GEMMA_POLISH_NORMAL -> copy(userPromptPolishNormal = prompt)
         VoiceMode.GEMMA_POLISH_FORMAL -> copy(userPromptPolishFormal = prompt)
+        VoiceMode.GEMMA_SCREENSHOT_CORRECTION -> copy(userPromptScreenshotCorrection = prompt)
         VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION -> copy(userPromptScreenshotInstruction = prompt)
     }
 }
@@ -100,8 +100,8 @@ class ImeSettingsStore(private val appFilesDir: File) {
             stripTrailingPeriod = props.getProperty("stripTrailingPeriod", "false").toBoolean(),
             systemPromptOverride = props.getProperty("promptSystem", ""),
             userPromptWhisperRaw = props.getProperty("promptUserWhisperRaw", ""),
-            userPromptPolishNormal = props.getProperty("promptUserPolishNormal", ""),
             userPromptPolishFormal = props.getProperty("promptUserPolishFormal", ""),
+            userPromptScreenshotCorrection = props.getProperty("promptUserScreenshotCorrection", ""),
             userPromptScreenshotInstruction = props.getProperty("promptUserScreenshotInstruction", ""),
         )
         cachedMtime = mtime
@@ -133,8 +133,8 @@ class ImeSettingsStore(private val appFilesDir: File) {
             setProperty("stripTrailingPeriod", settings.stripTrailingPeriod.toString())
             setProperty("promptSystem", settings.systemPromptOverride)
             setProperty("promptUserWhisperRaw", settings.userPromptWhisperRaw)
-            setProperty("promptUserPolishNormal", settings.userPromptPolishNormal)
             setProperty("promptUserPolishFormal", settings.userPromptPolishFormal)
+            setProperty("promptUserScreenshotCorrection", settings.userPromptScreenshotCorrection)
             setProperty("promptUserScreenshotInstruction", settings.userPromptScreenshotInstruction)
         }
         val tmp = File(appFilesDir, "ime-settings.properties.tmp")

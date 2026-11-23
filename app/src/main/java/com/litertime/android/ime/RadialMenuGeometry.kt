@@ -14,8 +14,8 @@ enum class MicSource {
 enum class RadialAction(val label: String) {
     NONE(""),
     WHISPER_TRANSCRIBE("Whisper 识别"),
-    GEMMA_POLISH_NORMAL("润色·普通"),
     GEMMA_POLISH_FORMAL("润色·正式"),
+    GEMMA_SCREENSHOT_CORRECTION("截屏纠错"),
     GEMMA_SCREENSHOT_INSTRUCTION("截屏指令"),
     CANCEL("取消"),
 }
@@ -86,15 +86,15 @@ object RadialMenuGeometry {
         val action = if (distanceRatio < CENTER_ZONE_RATIO) {
             when (source) {
                 MicSource.WHISPER -> RadialAction.WHISPER_TRANSCRIBE
-                MicSource.GEMMA -> RadialAction.GEMMA_POLISH_NORMAL
+                MicSource.GEMMA -> RadialAction.GEMMA_POLISH_FORMAL
             }
         } else {
             when (source) {
                 MicSource.WHISPER -> RadialAction.CANCEL
                 MicSource.GEMMA -> when {
                     angleDeg >= 135f -> RadialAction.CANCEL
-                    angleDeg >= 90f -> RadialAction.GEMMA_POLISH_NORMAL
-                    angleDeg >= 45f -> RadialAction.GEMMA_POLISH_FORMAL
+                    angleDeg >= 90f -> RadialAction.GEMMA_POLISH_FORMAL
+                    angleDeg >= 45f -> RadialAction.GEMMA_SCREENSHOT_CORRECTION
                     else -> RadialAction.GEMMA_SCREENSHOT_INSTRUCTION
                 }
             }

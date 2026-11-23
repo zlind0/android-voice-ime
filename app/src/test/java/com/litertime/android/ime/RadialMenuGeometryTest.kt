@@ -36,7 +36,7 @@ class RadialMenuGeometryTest {
     }
 
     @Test
-    fun gemmaCenterDefaultsToNormalPolishAndEdgesMapAllFourSectors() {
+    fun gemmaCenterDefaultsToFormalPolishAndEdgesMapAllFourSectors() {
         val center = RadialMenuGeometry.evaluate(
             anchorX = anchorX,
             anchorY = anchorY,
@@ -45,12 +45,12 @@ class RadialMenuGeometryTest {
             radius = radius,
             source = MicSource.GEMMA,
         )
-        assertEquals(RadialAction.GEMMA_POLISH_NORMAL, center.action)
+        assertEquals(RadialAction.GEMMA_POLISH_FORMAL, center.action)
 
         val cases = listOf(
             160f to RadialAction.CANCEL,
-            115f to RadialAction.GEMMA_POLISH_NORMAL,
-            65f to RadialAction.GEMMA_POLISH_FORMAL,
+            115f to RadialAction.GEMMA_POLISH_FORMAL,
+            65f to RadialAction.GEMMA_SCREENSHOT_CORRECTION,
             20f to RadialAction.GEMMA_SCREENSHOT_INSTRUCTION,
         )
         for ((angle, expected) in cases) {

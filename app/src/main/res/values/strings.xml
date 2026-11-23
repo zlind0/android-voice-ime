@@ -5,5 +5,5 @@
     <string name="ime_subtype_zh">中文语音输入</string>
     <string name="ime_subtype_en">English Voice Input</string>
     <string name="accessibility_service_label">LiteRT 语音输入法截屏辅助</string>
-    <string name="accessibility_service_description">仅在您拖选 Gemma 4“截屏指令”功能时截取当前屏幕内容作为视觉上下文，不会上传或后台持续监听。</string>
+    <string name="accessibility_service_description">仅在您拖选 Gemma 4“截屏纠错”或“截屏指令”功能时截取当前屏幕内容作为视觉上下文，不会上传或后台持续监听。</string>
 </resources>

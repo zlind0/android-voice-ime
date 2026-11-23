@@ -631,9 +631,9 @@ private fun LiteRtImeSettingsScreen(
                     icon = { Icon(Icons.Rounded.Screenshot, contentDescription = null) },
                     title = "无障碍截屏服务",
                     subtitle = when {
-                        a11yConnected -> "已连接（支持拖至「截屏」执行指令）"
+                        a11yConnected -> "已连接（支持「截屏纠错」「截屏指令」）"
                         a11yEnabled -> "系统已启用，等待连接"
-                        else -> "拖选 Gemma 4「截屏指令」时需开启一次"
+                        else -> "使用 Gemma 4 截屏功能前需开启一次"
                     },
                     granted = a11yConnected || a11yEnabled,
                     actionLabel = if (a11yConnected) "已开启" else "去开启",
@@ -1527,8 +1527,8 @@ private fun LogEntryRow(
 
 private fun voiceModePromptLabel(mode: VoiceMode): String = when (mode) {
     VoiceMode.WHISPER_RAW -> "原样转写"
-    VoiceMode.GEMMA_POLISH_NORMAL -> "日常润色"
     VoiceMode.GEMMA_POLISH_FORMAL -> "正式润色"
+    VoiceMode.GEMMA_SCREENSHOT_CORRECTION -> "截屏纠错"
     VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION -> "截屏指令"
 }
 

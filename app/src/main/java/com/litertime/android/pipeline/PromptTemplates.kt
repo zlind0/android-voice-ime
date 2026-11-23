@@ -24,10 +24,10 @@ object PromptTemplates {
     fun userPromptFor(mode: VoiceMode): String = when (mode) {
         VoiceMode.WHISPER_RAW ->
             "请原样转写这段语音。\n"
-        VoiceMode.GEMMA_POLISH_NORMAL ->
-            "请将这段语音听写为自然流畅的日常书面文字：保留原意，去除口头禅、重复和明显口误，补全合适标点。直接输出最终文本。\n"
         VoiceMode.GEMMA_POLISH_FORMAL ->
             "请将这段语音听写并润色为正式、得体、清晰的书面或商务表达：保留核心语义，优化措辞与标点，使用*至少50字*表达用户的意思。直接输出最终文本。\n"
+        VoiceMode.GEMMA_SCREENSHOT_CORRECTION ->
+            "请结合附带的当前屏幕截图理解上下文，将这段语音转写为文字，并纠正与屏幕内容明显不符的识别错误，注意用户输入与屏幕内容的关联性；保持用户原本的表达、语气和意图，不要照搬或扩写截图内容。直接输出纠正后的最终文本。\n"
         VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION ->
             "请结合附带的当前屏幕截图理解上下文，并严格按照语音中的指令直接生成可输入到当前输入框的文本结果，不要输出多余说明。如果用户没有要求，大约输出50-100字。\n"
     }
