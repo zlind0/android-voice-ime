@@ -148,13 +148,22 @@ class InferenceService : Service() {
             val resolvedSystemPrompt = if (type == "ASR") {
                 ""
             } else {
-                PromptTemplates.resolveSystemPrompt(systemPromptOverride)
+                PromptTemplates.resolveSystemPrompt(
+                    override = systemPromptOverride,
+                    saved = settings.systemPromptOverride,
+                )
             }
             val resolvedUserPrompt = if (type == "ASR") {
                 ""
             } else {
-                PromptTemplates.resolveUserPrompt(voiceMode, userPromptOverride)
+                PromptTemplates.resolveUserPrompt(
+                    mode = voiceMode,
+                    override = userPromptOverride,
+                    saved = settings.userPromptOverride(voiceMode),
+                )
             }
+            val requestSystemPrompt = resolvedSystemPrompt.takeIf { type != "ASR" }
+            val requestUserPrompt = resolvedUserPrompt.takeIf { type != "ASR" }
             val modelDisplayName = when (type) {
                 "ASR" -> ModelCatalog.findAsr(id)?.displayName ?: id
                 "LLM" -> ModelCatalog.findLlm(id)?.displayName ?: id
@@ -191,8 +200,8 @@ class InferenceService : Service() {
                                 audioWavFile = audioFile,
                                 screenshotFile = imageFile,
                                 languageHint = languageHint,
-                                systemPrompt = systemPromptOverride,
-                                userPrompt = userPromptOverride,
+                                systemPrompt = requestSystemPrompt,
+                                userPrompt = requestUserPrompt,
                             ),
                             recorder = recorder,
                         )
@@ -216,8 +225,8 @@ class InferenceService : Service() {
                             audioWavFile = audioFile,
                             screenshotFile = imageFile,
                             languageHint = languageHint,
-                            systemPrompt = systemPromptOverride,
-                            userPrompt = userPromptOverride,
+                            systemPrompt = requestSystemPrompt,
+                            userPrompt = requestUserPrompt,
                         ),
                         recorder = recorder,
                     )

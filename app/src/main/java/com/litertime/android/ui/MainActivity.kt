@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.Memory
@@ -97,6 +98,8 @@ import com.litertime.android.debug.AiRequestLogStore
 import com.litertime.android.debug.PlaygroundDraft
 import com.litertime.android.inference.InferenceClient
 import com.litertime.android.inference.StreamListener
+import com.litertime.android.pipeline.PromptTemplates
+import com.litertime.android.pipeline.VoiceMode
 import com.litertime.android.settings.LlmProviderType
 import com.litertime.android.storage.DownloadMirror
 import com.litertime.android.storage.DownloadState
@@ -244,6 +247,7 @@ private enum class SettingsPage(val title: String) {
     SERVICE("独立推理引擎状态"),
     MODELS("模型下载与选择"),
     ONLINE("在线大模型接口"),
+    PROMPTS("提示词编辑"),
     DEBUG("AI 请求调试与回放"),
 }
 
@@ -479,6 +483,19 @@ private fun LiteRtImeSettingsScreen(
         append(" 条记录")
     }
 
+    val promptsPreview = buildString {
+        append(if (settings.systemPromptOverride.isBlank()) "系统 Prompt 默认" else "系统 Prompt 已自定义")
+        val customizedModes = VoiceMode.entries.count { settings.userPromptOverride(it).isNotBlank() }
+        append(" · ")
+        append(
+            if (customizedModes == 0) {
+                "模式 Prompt 全部默认"
+            } else {
+                "模式 Prompt $customizedModes/${VoiceMode.entries.size} 已自定义"
+            },
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -534,6 +551,12 @@ private fun LiteRtImeSettingsScreen(
                     title = "在线大模型接口",
                     preview = onlinePreview,
                     onClick = { currentPage = SettingsPage.ONLINE },
+                )
+                SettingsHomeItem(
+                    icon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
+                    title = "提示词编辑",
+                    preview = promptsPreview,
+                    onClick = { currentPage = SettingsPage.PROMPTS },
                 )
                 SettingsHomeItem(
                     icon = { Icon(Icons.Rounded.BugReport, contentDescription = null) },
@@ -926,9 +949,101 @@ private fun LiteRtImeSettingsScreen(
             }
             }
 
-            // 6. AI request logging & replay playground
+            // 6. Prompt editing (system prompt + per-mode user prompts)
+            if (currentPage == SettingsPage.PROMPTS) {
+            SectionCard(title = "6. 提示词编辑") {
+                Text(
+                    text = "留空表示使用内置默认模板。修改会立即保存，并在下一次语音请求时生效。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text("统一 System Prompt", style = MaterialTheme.typography.titleSmall)
+                OutlinedTextField(
+                    value = settings.systemPromptOverride,
+                    onValueChange = { value ->
+                        settings = settingsStore.update { it.copy(systemPromptOverride = value) }
+                    },
+                    label = { Text("所有模式共用") },
+                    placeholder = { Text(PromptTemplates.SYSTEM_PROMPT_VOICE_IME) },
+                    minLines = 4,
+                    maxLines = 12,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    TextButton(
+                        onClick = {
+                            settings = settingsStore.update {
+                                it.copy(systemPromptOverride = PromptTemplates.SYSTEM_PROMPT_VOICE_IME)
+                            }
+                        },
+                    ) {
+                        Text("填入默认模板")
+                    }
+                    TextButton(
+                        enabled = settings.systemPromptOverride.isNotBlank(),
+                        onClick = {
+                            settings = settingsStore.update { it.copy(systemPromptOverride = "") }
+                        },
+                    ) {
+                        Text("恢复默认")
+                    }
+                }
+
+                HorizontalDivider()
+                Text("各模式 User Prompt", style = MaterialTheme.typography.titleSmall)
+                VoiceMode.entries.forEach { mode ->
+                    val savedPrompt = settings.userPromptOverride(mode)
+                    val defaultPrompt = PromptTemplates.userPromptFor(mode)
+                    OutlinedTextField(
+                        value = savedPrompt,
+                        onValueChange = { value ->
+                            settings = settingsStore.update { current ->
+                                current.withUserPromptOverride(mode, value)
+                            }
+                        },
+                        label = { Text(voiceModePromptLabel(mode)) },
+                        placeholder = { Text(defaultPrompt) },
+                        minLines = 3,
+                        maxLines = 10,
+                        supportingText = {
+                            Text(if (savedPrompt.isBlank()) "当前使用内置默认模板" else "已自定义")
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TextButton(
+                            onClick = {
+                                settings = settingsStore.update { current ->
+                                    current.withUserPromptOverride(mode, defaultPrompt)
+                                }
+                            },
+                        ) {
+                            Text("填入默认模板")
+                        }
+                        TextButton(
+                            enabled = savedPrompt.isNotBlank(),
+                            onClick = {
+                                settings = settingsStore.update { current ->
+                                    current.withUserPromptOverride(mode, "")
+                                }
+                            },
+                        ) {
+                            Text("恢复默认")
+                        }
+                    }
+                }
+            }
+            }
+
+            // 7. AI request logging & replay playground
             if (currentPage == SettingsPage.DEBUG) {
-            SectionCard(title = "6. AI 请求调试与回放") {
+            SectionCard(title = "7. AI 请求调试与回放") {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1336,6 +1451,13 @@ private fun LogEntryRow(
             )
         }
     }
+}
+
+private fun voiceModePromptLabel(mode: VoiceMode): String = when (mode) {
+    VoiceMode.WHISPER_RAW -> "原样转写"
+    VoiceMode.GEMMA_POLISH_NORMAL -> "日常润色"
+    VoiceMode.GEMMA_POLISH_FORMAL -> "正式润色"
+    VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION -> "截屏指令"
 }
 
 private fun formatLogTime(timestamp: Long): String =

@@ -1,6 +1,7 @@
 package com.litertime.android.settings
 
 import android.content.Context
+import com.litertime.android.pipeline.VoiceMode
 import com.litertime.android.storage.DownloadMirror
 import java.io.File
 import java.io.FileInputStream
@@ -30,7 +31,28 @@ data class ImeSettings(
     val onlineModelName: String = "gpt-4o-mini",
     /** When enabled, every AI request is persisted under `files/ai-request-logs/`. */
     val debugRequestLoggingEnabled: Boolean = false,
-)
+    /** Unified system prompt. Blank keeps the built-in default from `PromptTemplates`. */
+    val systemPromptOverride: String = "",
+    /** Per-mode user prompt overrides. Blank keeps the built-in default for that mode. */
+    val userPromptWhisperRaw: String = "",
+    val userPromptPolishNormal: String = "",
+    val userPromptPolishFormal: String = "",
+    val userPromptScreenshotInstruction: String = "",
+) {
+    fun userPromptOverride(mode: VoiceMode): String = when (mode) {
+        VoiceMode.WHISPER_RAW -> userPromptWhisperRaw
+        VoiceMode.GEMMA_POLISH_NORMAL -> userPromptPolishNormal
+        VoiceMode.GEMMA_POLISH_FORMAL -> userPromptPolishFormal
+        VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION -> userPromptScreenshotInstruction
+    }
+
+    fun withUserPromptOverride(mode: VoiceMode, prompt: String): ImeSettings = when (mode) {
+        VoiceMode.WHISPER_RAW -> copy(userPromptWhisperRaw = prompt)
+        VoiceMode.GEMMA_POLISH_NORMAL -> copy(userPromptPolishNormal = prompt)
+        VoiceMode.GEMMA_POLISH_FORMAL -> copy(userPromptPolishFormal = prompt)
+        VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION -> copy(userPromptScreenshotInstruction = prompt)
+    }
+}
 
 /**
  * Cross-process settings store backed by `<app>/files/ime-settings.properties` with mtime caching,
@@ -73,6 +95,11 @@ class ImeSettingsStore(private val appFilesDir: File) {
             onlineApiKey = props.getProperty("onlineApiKey", ""),
             onlineModelName = props.getProperty("onlineModelName", "gpt-4o-mini"),
             debugRequestLoggingEnabled = props.getProperty("debugRequestLoggingEnabled", "false").toBoolean(),
+            systemPromptOverride = props.getProperty("promptSystem", ""),
+            userPromptWhisperRaw = props.getProperty("promptUserWhisperRaw", ""),
+            userPromptPolishNormal = props.getProperty("promptUserPolishNormal", ""),
+            userPromptPolishFormal = props.getProperty("promptUserPolishFormal", ""),
+            userPromptScreenshotInstruction = props.getProperty("promptUserScreenshotInstruction", ""),
         )
         cachedMtime = mtime
         cachedSettings = loaded
@@ -100,6 +127,11 @@ class ImeSettingsStore(private val appFilesDir: File) {
             setProperty("onlineApiKey", settings.onlineApiKey)
             setProperty("onlineModelName", settings.onlineModelName)
             setProperty("debugRequestLoggingEnabled", settings.debugRequestLoggingEnabled.toString())
+            setProperty("promptSystem", settings.systemPromptOverride)
+            setProperty("promptUserWhisperRaw", settings.userPromptWhisperRaw)
+            setProperty("promptUserPolishNormal", settings.userPromptPolishNormal)
+            setProperty("promptUserPolishFormal", settings.userPromptPolishFormal)
+            setProperty("promptUserScreenshotInstruction", settings.userPromptScreenshotInstruction)
         }
         val tmp = File(appFilesDir, "ime-settings.properties.tmp")
         FileOutputStream(tmp).use { props.store(it, "LiteRT IME settings") }

@@ -12,4 +12,31 @@ class PromptTemplatesTest {
         assertEquals(VoiceMode.entries.size, prompts.toSet().size)
         assertTrue(PromptTemplates.SYSTEM_PROMPT_VOICE_IME.isNotBlank())
     }
+
+    @Test
+    fun savedPromptsOverrideDefaultsAndBlankFallsBack() {
+        val mode = VoiceMode.GEMMA_POLISH_NORMAL
+
+        assertEquals(
+            "自定义系统提示词",
+            PromptTemplates.resolveSystemPrompt(override = null, saved = "自定义系统提示词"),
+        )
+        assertEquals(
+            PromptTemplates.SYSTEM_PROMPT_VOICE_IME,
+            PromptTemplates.resolveSystemPrompt(override = null, saved = "   "),
+        )
+        assertEquals(
+            "自定义模式提示词",
+            PromptTemplates.resolveUserPrompt(mode = mode, override = null, saved = "自定义模式提示词"),
+        )
+        assertEquals(
+            PromptTemplates.userPromptFor(mode),
+            PromptTemplates.resolveUserPrompt(mode = mode, override = null, saved = ""),
+        )
+        // Playground overrides stay stronger than saved settings, including an empty one.
+        assertEquals(
+            "",
+            PromptTemplates.resolveSystemPrompt(override = "", saved = "自定义系统提示词"),
+        )
+    }
 }
