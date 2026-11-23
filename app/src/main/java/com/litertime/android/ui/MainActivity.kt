@@ -474,6 +474,9 @@ private fun LiteRtImeSettingsScreen(
         append(ModelCatalog.findAsr(settings.activeAsrModelId)?.displayName ?: settings.activeAsrModelId)
         append(" · LLM: ")
         append(ModelCatalog.findLlm(settings.activeLlmModelId)?.displayName ?: settings.activeLlmModelId)
+        if (settings.voiceCascadeEnabled) {
+            append(" · 语音级联")
+        }
     }
 
     val inputPreview = if (settings.stripTrailingPeriod) "句尾句号已去除" else "保留句尾句号"
@@ -856,6 +859,49 @@ private fun LiteRtImeSettingsScreen(
                 }
 
                 HorizontalDivider()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("语音级联", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = if (settings.voiceCascadeEnabled) {
+                                "AI 麦克风先用下方 Whisper/ASR 模型转写为文字，再把文字交给大模型处理；截屏纠错与截屏指令同样生效"
+                            } else {
+                                "关闭时由 Gemma 4 直接理解语音（端到端多模态），不经过 Whisper"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = settings.voiceCascadeEnabled,
+                        onCheckedChange = { checked ->
+                            settings = settingsStore.update { it.copy(voiceCascadeEnabled = checked) }
+                        },
+                    )
+                }
+                if (settings.voiceCascadeEnabled) {
+                    val cascadeAsrSpec = ModelCatalog.findAsr(settings.activeAsrModelId)
+                    val cascadeAsrReady = cascadeAsrSpec != null && storage.isAsrInstalled(cascadeAsrSpec)
+                    Text(
+                        text = if (cascadeAsrReady) {
+                            "级联 ASR：${cascadeAsrSpec?.displayName} · 提示词会自动改用识别文本版本"
+                        } else {
+                            "所选 ASR 模型尚未安装，级联时会自动回退到 Gemma 直接识别语音"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (cascadeAsrReady) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                    )
+                }
+
+                HorizontalDivider()
                 Text("端侧 Gemma 4 多模态模型", style = MaterialTheme.typography.titleSmall)
                 ModelCatalog.llmModels.forEach { spec ->
                     val installed = storage.isLlmInstalled(spec)
@@ -1066,9 +1112,21 @@ private fun LiteRtImeSettingsScreen(
 
                 HorizontalDivider()
                 Text("各模式 User Prompt", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = if (settings.voiceCascadeEnabled) {
+                        "「语音级联」已开启：下方默认模板与占位符为识别文本版本，模型收到 ASR 文本而非音频。已自定义的模板在开启/关闭级联时共用。"
+                    } else {
+                        "开启「语音级联」后，未自定义的模式会自动改用识别文本版本的默认模板（模型收到 ASR 文本，不再接收音频）。"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 VoiceMode.entries.forEach { mode ->
                     val savedPrompt = settings.userPromptOverride(mode)
-                    val defaultPrompt = PromptTemplates.userPromptFor(mode)
+                    val defaultPrompt = PromptTemplates.userPromptFor(
+                        mode,
+                        cascade = settings.voiceCascadeEnabled,
+                    )
                     OutlinedTextField(
                         value = savedPrompt,
                         onValueChange = { value ->
@@ -1192,6 +1250,14 @@ private fun LiteRtImeSettingsScreen(
                             "截图 ${if (selectedLogEntry.hasScreenshot) "✓" else "✗"}",
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    if (selectedLogEntry.transcript.isNotBlank()) {
+                        Text(
+                            text = "ASR 转写（语音级联输入）：${selectedLogEntry.transcript}",
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 6,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
 
                     if (selectedLogEntry.hasScreenshot) {
                         val screenshot by produceState<ImageBitmap?>(
@@ -1324,6 +1390,9 @@ private fun LiteRtImeSettingsScreen(
                                         if (selectedLogEntry.backendType != "ASR") {
                                             put("systemPrompt", draftSystemPrompt)
                                             put("userPrompt", draftUserPrompt)
+                                            if (selectedLogEntry.transcript.isNotBlank()) {
+                                                put("asrTranscript", selectedLogEntry.transcript)
+                                            }
                                         }
                                         put("origin", "playground")
                                         put("replayOf", selectedLogEntry.id)

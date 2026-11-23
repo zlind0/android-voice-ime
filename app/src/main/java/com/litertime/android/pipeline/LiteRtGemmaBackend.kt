@@ -216,14 +216,27 @@ class LiteRtGemmaBackend(
                     }
                 }
 
-                // 3) Audio always last: label + audio.
-                list.add(Content.Text("\n[语音]:"))
-                list.add(Content.AudioBytes(request.audioWavFile.readBytes()))
+                // 3) Input always last: audio, or the ASR transcript in cascade mode.
+                val transcript = request.asrTranscript
+                if (transcript != null) {
+                    list.add(Content.Text("\n[语音识别文本]:\n$transcript"))
+                } else {
+                    list.add(Content.Text("\n[语音]:"))
+                    list.add(Content.AudioBytes(request.audioWavFile.readBytes()))
+                }
 
                 Contents.of(list)
             }
 
-            trySend(GenerationEvent.Status("Gemma 4 正在理解并生成..."))
+            trySend(
+                GenerationEvent.Status(
+                    if (request.asrTranscript != null) {
+                        "Gemma 4 正在结合识别文本生成..."
+                    } else {
+                        "Gemma 4 正在理解并生成..."
+                    },
+                ),
+            )
             conversation.sendMessageAsync(
                 contents,
                 object : MessageCallback {

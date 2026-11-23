@@ -36,7 +36,7 @@ class RadialMenuGeometryTest {
     }
 
     @Test
-    fun gemmaCenterDefaultsToFormalPolishAndEdgesMapAllFourSectors() {
+    fun gemmaCenterDefaultsToScreenshotCorrectionAndEdgesMapAllFourSectors() {
         val center = RadialMenuGeometry.evaluate(
             anchorX = anchorX,
             anchorY = anchorY,
@@ -45,7 +45,11 @@ class RadialMenuGeometryTest {
             radius = radius,
             source = MicSource.GEMMA,
         )
-        assertEquals(RadialAction.GEMMA_POLISH_FORMAL, center.action)
+        assertEquals(RadialAction.GEMMA_SCREENSHOT_CORRECTION, center.action)
+        assertEquals(
+            RadialAction.GEMMA_SCREENSHOT_CORRECTION,
+            RadialMenuGeometry.centerActionFor(MicSource.GEMMA),
+        )
 
         val cases = listOf(
             160f to RadialAction.CANCEL,
@@ -64,6 +68,30 @@ class RadialMenuGeometryTest {
                 source = MicSource.GEMMA,
             )
             assertEquals("Angle $angle mismatch", expected, eval.action)
+        }
+    }
+
+    @Test
+    fun draggingBelowTheAnchorKeepsTheDefaultInsteadOfFormalPolish() {
+        // The AI mic button is tall, so the finger spends most of its start position below the
+        // anchor. No sector label is under it there; the gesture must stay on the default action
+        // (screenshot correction) rather than silently switching to "正式".
+        for (dy in listOf(8f, 40f, 70f, 110f)) {
+            for (dx in listOf(-6f, 0f, 6f)) {
+                val eval = RadialMenuGeometry.evaluate(
+                    anchorX = anchorX,
+                    anchorY = anchorY,
+                    pointerX = anchorX + dx,
+                    pointerY = anchorY + dy,
+                    radius = radius,
+                    source = MicSource.GEMMA,
+                )
+                assertEquals(
+                    "dx=$dx dy=$dy should keep the AI mic default",
+                    RadialAction.GEMMA_SCREENSHOT_CORRECTION,
+                    eval.action,
+                )
+            }
         }
     }
 

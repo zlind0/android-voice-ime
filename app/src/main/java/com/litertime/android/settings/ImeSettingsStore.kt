@@ -23,6 +23,11 @@ data class ImeSettings(
     val activeAsrModelId: String = "whisper-small",
     val activeLlmModelId: String = "gemma4-e2b",
     val useGpuForLlm: Boolean = true,
+    /**
+     * When enabled, AI-mic voice input is first transcribed by Whisper/ASR and only the text is
+     * handed to the large model (cascade), instead of feeding audio straight into Gemma 4.
+     */
+    val voiceCascadeEnabled: Boolean = false,
     val whisperLanguage: String = "",
     val downloadMirror: DownloadMirror = DownloadMirror.HF_MIRROR,
     val llmProvider: LlmProviderType = LlmProviderType.LOCAL_LITERT,
@@ -90,6 +95,7 @@ class ImeSettingsStore(private val appFilesDir: File) {
             activeAsrModelId = props.getProperty("activeAsrModelId", "whisper-small"),
             activeLlmModelId = props.getProperty("activeLlmModelId", "gemma4-e2b"),
             useGpuForLlm = props.getProperty("useGpuForLlm", "true").toBoolean(),
+            voiceCascadeEnabled = props.getProperty("voiceCascadeEnabled", "false").toBoolean(),
             whisperLanguage = props.getProperty("whisperLanguage", ""),
             downloadMirror = DownloadMirror.fromId(props.getProperty("downloadMirror")),
             llmProvider = LlmProviderType.fromId(props.getProperty("llmProvider")),
@@ -123,6 +129,7 @@ class ImeSettingsStore(private val appFilesDir: File) {
             setProperty("activeAsrModelId", settings.activeAsrModelId)
             setProperty("activeLlmModelId", settings.activeLlmModelId)
             setProperty("useGpuForLlm", settings.useGpuForLlm.toString())
+            setProperty("voiceCascadeEnabled", settings.voiceCascadeEnabled.toString())
             setProperty("whisperLanguage", settings.whisperLanguage)
             setProperty("downloadMirror", settings.downloadMirror.name)
             setProperty("llmProvider", settings.llmProvider.name)

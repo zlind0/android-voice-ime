@@ -31,6 +31,8 @@ data class AiRequestLogEntry(
     val systemPrompt: String,
     val userPrompt: String,
     val languageHint: String,
+    /** ASR transcript when the request ran through the voice cascade, otherwise blank. */
+    val transcript: String = "",
     val origin: String,
     val replayOf: String,
     val audioFileName: String,
@@ -106,6 +108,7 @@ class AiRequestLogStore(
         replayOf: String,
         audioFile: File?,
         screenshotFile: File?,
+        transcript: String? = null,
     ): RequestLogRecorder? = runCatching {
         val timestamp = System.currentTimeMillis()
         val id = "$timestamp-$requestId"
@@ -141,6 +144,7 @@ class AiRequestLogStore(
                 put("systemPrompt", systemPrompt)
                 put("userPrompt", userPrompt)
                 put("languageHint", languageHint)
+                put("transcript", transcript.orEmpty())
                 put("origin", origin)
                 put("replayOf", replayOf)
                 put("audioFileName", audioName)
@@ -250,6 +254,7 @@ class AiRequestLogStore(
             systemPrompt = meta.optString("systemPrompt", ""),
             userPrompt = meta.optString("userPrompt", ""),
             languageHint = meta.optString("languageHint", ""),
+            transcript = meta.optString("transcript", ""),
             origin = meta.optString("origin", "ime"),
             replayOf = meta.optString("replayOf", ""),
             audioFileName = audioName,

@@ -27,6 +27,7 @@ import com.litertime.android.pipeline.SherpaAsrBackend
 import com.litertime.android.pipeline.TextGenerationBackend
 import com.litertime.android.pipeline.VoiceGenerationRequest
 import com.litertime.android.pipeline.VoiceMode
+import com.litertime.android.settings.ImeSettings
 import com.litertime.android.settings.ImeSettingsStore
 import com.litertime.android.storage.ModelCatalog
 import com.litertime.android.storage.ModelStorage
@@ -146,35 +147,56 @@ class InferenceService : Service() {
             } else {
                 null
             }
+            // Replaying a cascade request carries the original ASR transcript so the replay feeds
+            // text (not audio) into the model again, exactly like the recorded run.
+            val asrTranscriptOverride = if (extra.has("asrTranscript")) {
+                extra.optString("asrTranscript", "").takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
             val origin = extra.optString("origin", "ime")
             val replayOf = extra.optString("replayOf", "")
 
             val settings = settingsStore.getSettings()
-            val resolvedSystemPrompt = if (type == "ASR") {
-                ""
-            } else {
-                PromptTemplates.resolveSystemPrompt(
-                    override = systemPromptOverride,
-                    saved = settings.systemPromptOverride,
-                )
-            }
-            val resolvedUserPrompt = if (type == "ASR") {
-                ""
-            } else {
-                PromptTemplates.resolveUserPrompt(
-                    mode = voiceMode,
-                    override = userPromptOverride,
-                    saved = settings.userPromptOverride(voiceMode),
-                )
-            }
-            val requestSystemPrompt = resolvedSystemPrompt.takeIf { type != "ASR" }
-            val requestUserPrompt = resolvedUserPrompt.takeIf { type != "ASR" }
             val modelDisplayName = when (type) {
                 "ASR" -> ModelCatalog.findAsr(id)?.displayName ?: id
                 "LLM" -> ModelCatalog.findLlm(id)?.displayName ?: id
                 else -> settings.onlineModelName.ifBlank { id }
             }
             val job = serviceScope.launch {
+                // Voice cascade: Whisper/ASR transcribes first, the LLM only ever sees text.
+                val transcript = if (type != "ASR" && voiceMode != VoiceMode.WHISPER_RAW) {
+                    asrTranscriptOverride
+                        ?: if (settings.voiceCascadeEnabled) {
+                            transcribeForCascade(reqId, audioFile, languageHint, settings)
+                        } else {
+                            null
+                        }
+                } else {
+                    null
+                }
+                val cascade = transcript != null
+                val resolvedSystemPrompt = if (type == "ASR") {
+                    ""
+                } else {
+                    PromptTemplates.resolveSystemPrompt(
+                        override = systemPromptOverride,
+                        saved = settings.systemPromptOverride,
+                        cascade = cascade,
+                    )
+                }
+                val resolvedUserPrompt = if (type == "ASR") {
+                    ""
+                } else {
+                    PromptTemplates.resolveUserPrompt(
+                        mode = voiceMode,
+                        override = userPromptOverride,
+                        saved = settings.userPromptOverride(voiceMode),
+                        cascade = cascade,
+                    )
+                }
+                val requestSystemPrompt = resolvedSystemPrompt.takeIf { type != "ASR" }
+                val requestUserPrompt = resolvedUserPrompt.takeIf { type != "ASR" }
                 // Copying WAV/screenshot can be a few MB, so keep it off the binder thread.
                 val recorder: RequestLogRecorder? = if (settings.debugRequestLoggingEnabled) {
                     requestLogStore.recordRequest(
@@ -190,6 +212,7 @@ class InferenceService : Service() {
                         replayOf = replayOf,
                         audioFile = audioFile,
                         screenshotFile = imageFile,
+                        transcript = transcript,
                     )
                 } else {
                     null
@@ -205,6 +228,7 @@ class InferenceService : Service() {
                                 audioWavFile = audioFile,
                                 screenshotFile = imageFile,
                                 languageHint = languageHint,
+                                asrTranscript = transcript,
                                 systemPrompt = requestSystemPrompt,
                                 userPrompt = requestUserPrompt,
                             ),
@@ -230,6 +254,7 @@ class InferenceService : Service() {
                             audioWavFile = audioFile,
                             screenshotFile = imageFile,
                             languageHint = languageHint,
+                            asrTranscript = transcript,
                             systemPrompt = requestSystemPrompt,
                             userPrompt = requestUserPrompt,
                         ),
@@ -286,6 +311,69 @@ class InferenceService : Service() {
         callbacks.kill()
         serviceScope.cancel()
         super.onDestroy()
+    }
+
+    /**
+     * Runs the Whisper/ASR stage of the voice cascade and returns the transcript without
+     * broadcasting any tokens to the IME. Returns null when ASR is unavailable or the audio could
+     * not be recognized, so the caller can fall back to feeding audio straight into Gemma.
+     */
+    private suspend fun transcribeForCascade(
+        requestId: String,
+        audioFile: File,
+        languageHint: String,
+        settings: ImeSettings,
+    ): String? {
+        val spec = ModelCatalog.findAsr(settings.activeAsrModelId)
+            ?.takeIf { modelStorage.isAsrInstalled(it) }
+            ?: modelStorage.findFirstInstalledAsrId()?.let { ModelCatalog.findAsr(it) }
+        if (spec == null) {
+            updateStatus("语音级联：未安装 Whisper/ASR 模型，回退 Gemma 直接识别")
+            return null
+        }
+        if (!ensureBackendLoaded("ASR", spec.id)) {
+            updateStatus("语音级联：ASR 模型加载失败，回退 Gemma 直接识别")
+            return null
+        }
+
+        val builder = StringBuilder()
+        var failure: String? = null
+        try {
+            asrBackend.generateStream(
+                VoiceGenerationRequest(
+                    requestId = "$requestId-asr",
+                    mode = VoiceMode.WHISPER_RAW,
+                    modelId = spec.id,
+                    audioWavFile = audioFile,
+                    languageHint = languageHint,
+                ),
+            ).collect { event ->
+                when (event) {
+                    is GenerationEvent.Status -> updateStatus("语音级联 · ${event.message}")
+                    is GenerationEvent.Token -> builder.append(event.delta)
+                    is GenerationEvent.Completed -> Unit
+                    is GenerationEvent.Error -> failure = event.message
+                }
+            }
+        } catch (t: CancellationException) {
+            throw t
+        } catch (t: Throwable) {
+            failure = t.message ?: "ASR 识别异常"
+        }
+
+        val transcript = builder.toString().trim()
+        return when {
+            failure != null -> {
+                Log.w(TAG, "Cascade ASR failed, falling back to Gemma: $failure")
+                updateStatus("语音级联：ASR 识别失败，回退 Gemma 直接识别")
+                null
+            }
+            transcript.isEmpty() -> {
+                updateStatus("语音级联：未识别到语音内容，回退 Gemma 直接识别")
+                null
+            }
+            else -> transcript
+        }
     }
 
     private suspend fun ensureBackendLoaded(

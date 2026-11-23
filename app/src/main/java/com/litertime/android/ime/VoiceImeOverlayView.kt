@@ -24,7 +24,6 @@ import java.io.File
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.cos
-import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.sin
 
@@ -139,6 +138,8 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     private var pointerX: Float = 0f
     private var pointerY: Float = 0f
     private var currentAction: RadialAction = RadialAction.NONE
+    // Distance ratio produced by the last geometry evaluation; drives the center-zone highlight.
+    private var currentDistanceRatio: Float = 0f
     private var expandProgress: Float = 0f
     private var voiceAmplitude: Float = 0f
 
@@ -912,11 +913,13 @@ class VoiceImeOverlayView @JvmOverloads constructor(
             val sweepAngle = if (source == MicSource.WHISPER) 180f else 45f
             drawRingSector(canvas, anchorX, anchorY, innerR, currentR, startAngle, sweepAngle, sectorCancelPaint)
         } else if (source == MicSource.GEMMA) {
-            val dist = hypot(pointerX - anchorX, anchorY - pointerY)
-            if (dist < innerR) {
+            // The center zone is a full circle around the anchor (the finger starts inside the
+            // mic button, which is below the anchor). Any point inside it commits the default
+            // action, so highlight the whole zone instead of only the upper half-disc.
+            if (currentDistanceRatio < RadialMenuGeometry.CENTER_ZONE_RATIO) {
                 scratchRect.set(anchorX - innerR, anchorY - innerR, anchorX + innerR, anchorY + innerR)
                 val centerPath = Path().apply {
-                    addArc(scratchRect, 180f, 180f)
+                    addArc(scratchRect, 0f, 360f)
                     close()
                 }
                 canvas.drawPath(centerPath, centerHighlightPaint)
@@ -960,7 +963,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 112.5f, "正式")
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 67.5f, "纠错")
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 22.5f, "指令")
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.28f, 90f, "正式润色")
+            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.28f, 90f, "截屏纠错")
         }
 
         // Floating action pill above disc (the tray draws its own pill while targeted)
@@ -1107,6 +1110,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
                         currentAction = eval.action
                         performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                     }
+                    currentDistanceRatio = eval.distanceRatio
                     invalidate()
                     return true
                 }
@@ -1201,11 +1205,8 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         anchorY = barCardRect.top - dp(4f)
         pointerX = downX
         pointerY = downY
-        currentAction = if (source == MicSource.WHISPER) {
-            RadialAction.WHISPER_TRANSCRIBE
-        } else {
-            RadialAction.GEMMA_POLISH_FORMAL
-        }
+        currentAction = RadialMenuGeometry.centerActionFor(source)
+        currentDistanceRatio = 0f
         isRadialExpanded = true
         voiceAmplitude = 0f
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)

@@ -14,6 +14,43 @@ class PromptTemplatesTest {
     }
 
     @Test
+    fun cascadePromptsAreTextBasedAndDistinctFromAudioPrompts() {
+        val cascadePrompts = VoiceMode.entries.map { PromptTemplates.userPromptFor(it, cascade = true) }
+        cascadePrompts.forEach { assertTrue(it.isNotBlank()) }
+        assertEquals(VoiceMode.entries.size, cascadePrompts.toSet().size)
+        VoiceMode.entries.forEach { mode ->
+            assertTrue(
+                PromptTemplates.userPromptFor(mode, cascade = true) !=
+                    PromptTemplates.userPromptFor(mode),
+            )
+        }
+
+        assertTrue(PromptTemplates.SYSTEM_PROMPT_CASCADE_VOICE_IME.contains("语音识别"))
+        assertEquals(
+            PromptTemplates.SYSTEM_PROMPT_CASCADE_VOICE_IME,
+            PromptTemplates.resolveSystemPrompt(override = null, saved = "", cascade = true),
+        )
+        // An explicit saved prompt still wins over the cascade default.
+        assertEquals(
+            "自定义系统提示词",
+            PromptTemplates.resolveSystemPrompt(
+                override = null,
+                saved = "自定义系统提示词",
+                cascade = true,
+            ),
+        )
+        assertEquals(
+            PromptTemplates.userPromptFor(VoiceMode.GEMMA_POLISH_FORMAL, cascade = true),
+            PromptTemplates.resolveUserPrompt(
+                mode = VoiceMode.GEMMA_POLISH_FORMAL,
+                override = null,
+                saved = "",
+                cascade = true,
+            ),
+        )
+    }
+
+    @Test
     fun savedPromptsOverrideDefaultsAndBlankFallsBack() {
         val mode = VoiceMode.GEMMA_SCREENSHOT_CORRECTION
 

@@ -49,6 +49,12 @@ data class RadialEvaluation(
 object RadialMenuGeometry {
     const val CENTER_ZONE_RATIO: Float = 0.56f
 
+    /** Action committed when the finger stays in the inner disc (i.e. the AI mic default). */
+    fun centerActionFor(source: MicSource): RadialAction = when (source) {
+        MicSource.WHISPER -> RadialAction.WHISPER_TRANSCRIBE
+        MicSource.GEMMA -> RadialAction.GEMMA_SCREENSHOT_CORRECTION
+    }
+
     fun evaluate(
         anchorX: Float,
         anchorY: Float,
@@ -84,10 +90,7 @@ object RadialMenuGeometry {
         val angleDeg = (angleRad * 180.0 / PI).toFloat().coerceIn(0f, 180f)
 
         val action = if (distanceRatio < CENTER_ZONE_RATIO) {
-            when (source) {
-                MicSource.WHISPER -> RadialAction.WHISPER_TRANSCRIBE
-                MicSource.GEMMA -> RadialAction.GEMMA_POLISH_FORMAL
-            }
+            centerActionFor(source)
         } else {
             when (source) {
                 MicSource.WHISPER -> RadialAction.CANCEL

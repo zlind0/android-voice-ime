@@ -17,6 +17,11 @@ data class VoiceGenerationRequest(
     val audioWavFile: File,
     val screenshotFile: File? = null,
     val languageHint: String = "",
+    /**
+     * Text produced by Whisper/ASR when the voice cascade is enabled. When non-null the backend
+     * consumes this text instead of the audio, and the prompts describe an ASR transcript.
+     */
+    val asrTranscript: String? = null,
     /** Optional override for the system prompt, used by the debug playground. */
     val systemPrompt: String? = null,
     /** Optional override for the mode's user prompt, used by the debug playground. */
