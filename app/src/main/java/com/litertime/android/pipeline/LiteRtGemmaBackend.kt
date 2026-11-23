@@ -183,6 +183,11 @@ class LiteRtGemmaBackend(
         try {
             val contents = withContext(Dispatchers.IO) {
                 val list = mutableListOf<Content>()
+
+                // 1) Mode instruction first.
+                list.add(Content.Text(PromptTemplates.resolveUserPrompt(request.mode, request.userPrompt)))
+
+                // 2) Optional screenshot: label + image.
                 val shotFile = request.screenshotFile
                 if (shotFile != null && shotFile.isFile) {
                     val bitmap = BitmapFactory.decodeFile(shotFile.absolutePath)
@@ -190,6 +195,7 @@ class LiteRtGemmaBackend(
                         try {
                             val scaled = ImageEncoder.downscaleBitmap(bitmap, maxEdge = 896)
                             try {
+                                list.add(Content.Text("[Screen Context]:"))
                                 list.add(Content.ImageBytes(ImageEncoder.encodeTga(scaled)))
                             } finally {
                                 if (scaled !== bitmap) scaled.recycle()
@@ -200,9 +206,10 @@ class LiteRtGemmaBackend(
                     }
                 }
 
-                val wavBytes = request.audioWavFile.readBytes()
-                list.add(Content.AudioBytes(wavBytes))
-                list.add(Content.Text(PromptTemplates.resolveUserPrompt(request.mode, request.userPrompt)))
+                // 3) Audio always last: label + audio.
+                list.add(Content.Text("\n[Audio Instruction]:"))
+                list.add(Content.AudioBytes(request.audioWavFile.readBytes()))
+
                 Contents.of(list)
             }
 
