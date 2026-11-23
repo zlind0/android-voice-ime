@@ -56,16 +56,26 @@ class LiteRtGemmaBackend(
     private var loadedModelId: String? = null
 
     @Volatile
-    private var loadedWithGpu: Boolean = false
+    var loadedWithGpu: Boolean = false
+        private set
 
     override suspend fun ensureLoaded(modelId: String, onStatus: (String) -> Unit) {
+        ensureLoaded(modelId = modelId, forceGpu = false, onStatus = onStatus)
+    }
+
+    /** [forceGpu] bypasses the saved GPU toggle and any stale GPU crash marker. */
+    suspend fun ensureLoaded(
+        modelId: String,
+        forceGpu: Boolean,
+        onStatus: (String) -> Unit,
+    ) {
         loadMutex.withLock {
             val spec = ModelCatalog.findLlm(modelId)
                 ?: throw IllegalArgumentException("未知的 Gemma 模型: $modelId")
             val modelFile = modelStorage.llmModelFile(spec)
                 ?: throw IllegalStateException("模型 ${spec.displayName} 尚未下载或路径不可访问")
 
-            if (engine != null && loadedModelId == spec.id) {
+            if (engine != null && loadedModelId == spec.id && (!forceGpu || loadedWithGpu)) {
                 return
             }
 
@@ -73,7 +83,7 @@ class LiteRtGemmaBackend(
 
             val settings = settingsStore.getSettings()
             val gpuCrashDetected = modelStorage.hasGpuCrashMarker(BuildConfig.VERSION_CODE)
-            val tryGpu = settings.useGpuForLlm && !gpuCrashDetected
+            val tryGpu = forceGpu || (settings.useGpuForLlm && !gpuCrashDetected)
             val cacheDir = modelStorage.litertCacheDir().absolutePath
 
             Log.i(TAG, "Loading ${spec.id}: tryGpu=$tryGpu, gpuCrashDetected=$gpuCrashDetected, cacheDir=$cacheDir")

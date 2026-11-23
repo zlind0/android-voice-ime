@@ -45,6 +45,7 @@ import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Screenshot
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -126,7 +127,7 @@ class MainActivity : ComponentActivity() {
     private val playgroundRunState = PlaygroundRunState()
 
     private val playgroundListener = object : StreamListener {
-        override fun onStatusChanged(status: String, loadedEngineType: String, loadedModelId: String) {
+        override fun onStatusChanged(status: String) {
             playgroundRunState.onStatus(status)
         }
 
@@ -246,6 +247,7 @@ private enum class SettingsPage(val title: String) {
     STORAGE("模型共享存储"),
     SERVICE("独立推理引擎状态"),
     MODELS("模型下载与选择"),
+    INPUT("输入设置"),
     ONLINE("在线大模型接口"),
     PROMPTS("提示词编辑"),
     DEBUG("AI 请求调试与回放"),
@@ -449,14 +451,20 @@ private fun LiteRtImeSettingsScreen(
     } else {
         buildString {
             append(inferenceState.statusText)
-            if (inferenceState.loadedModelId.isNotBlank()) {
+            if (inferenceState.asrLoaded) {
                 append(" · ")
                 append(
-                    when (inferenceState.loadedEngineType) {
-                        "ASR" -> ModelCatalog.findAsr(inferenceState.loadedModelId)?.displayName
-                        else -> ModelCatalog.findLlm(inferenceState.loadedModelId)?.displayName
-                    } ?: inferenceState.loadedModelId,
+                    ModelCatalog.findAsr(inferenceState.asrModelId)?.displayName
+                        ?: inferenceState.asrModelId,
                 )
+            }
+            if (inferenceState.llmLoaded) {
+                append(" · ")
+                append(
+                    ModelCatalog.findLlm(inferenceState.llmModelId)?.displayName
+                        ?: inferenceState.llmModelId,
+                )
+                append(" (${inferenceState.llmBackendLabel})")
             }
         }
     }
@@ -467,6 +475,8 @@ private fun LiteRtImeSettingsScreen(
         append(" · LLM: ")
         append(ModelCatalog.findLlm(settings.activeLlmModelId)?.displayName ?: settings.activeLlmModelId)
     }
+
+    val inputPreview = if (settings.stripTrailingPeriod) "句尾句号已去除" else "保留句尾句号"
 
     val onlinePreview = buildString {
         append(settings.llmProvider.displayName)
@@ -545,6 +555,12 @@ private fun LiteRtImeSettingsScreen(
                     title = "模型下载与选择",
                     preview = modelsPreview,
                     onClick = { currentPage = SettingsPage.MODELS },
+                )
+                SettingsHomeItem(
+                    icon = { Icon(Icons.Rounded.Tune, contentDescription = null) },
+                    title = "输入设置",
+                    preview = inputPreview,
+                    onClick = { currentPage = SettingsPage.INPUT },
                 )
                 SettingsHomeItem(
                     icon = { Icon(Icons.Rounded.Cloud, contentDescription = null) },
@@ -734,8 +750,30 @@ private fun LiteRtImeSettingsScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
+                val residentParts = buildList {
+                    if (inferenceState.asrLoaded) {
+                        val name = ModelCatalog.findAsr(inferenceState.asrModelId)?.displayName
+                            ?: inferenceState.asrModelId
+                        add("Whisper $name")
+                    }
+                    if (inferenceState.llmLoaded) {
+                        val name = ModelCatalog.findLlm(inferenceState.llmModelId)?.displayName
+                            ?: inferenceState.llmModelId
+                        add("Gemma $name (${inferenceState.llmBackendLabel})")
+                    }
+                }
+                val residentText = if (residentParts.isEmpty()) {
+                    "(空)（Whisper 与 Gemma 可同时驻留，加载后不主动卸载）"
+                } else {
+                    residentParts.joinToString(" + ")
+                }
+                val pidText = if (inferenceState.inferencePid > 0) {
+                    " · pid ${inferenceState.inferencePid}"
+                } else {
+                    ""
+                }
                 Text(
-                    text = "当前驻留：${inferenceState.loadedEngineType} ${inferenceState.loadedModelId.ifBlank { "(空)" }}（Whisper 与 Gemma 互斥驻留，加载后不主动卸载）",
+                    text = "当前驻留：$residentText$pidText",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -836,8 +874,8 @@ private fun LiteRtImeSettingsScreen(
                         },
                         onCancelDownload = { downloader.cancel(spec.id) },
                         onDelete = {
-                            if (inferenceState.loadedModelId == spec.id) {
-                                inferenceClient.unloadModel()
+                            if (inferenceState.llmModelId == spec.id) {
+                                inferenceClient.unloadEngine("LLM")
                             }
                             storage.deleteLlmModel(spec.id)
                             refreshTick++
@@ -878,11 +916,45 @@ private fun LiteRtImeSettingsScreen(
                         },
                         onCancelDownload = { downloader.cancel(spec.id) },
                         onDelete = {
-                            if (inferenceState.loadedModelId == spec.id) {
-                                inferenceClient.unloadModel()
+                            if (inferenceState.asrModelId == spec.id) {
+                                inferenceClient.unloadEngine("ASR")
                             }
                             storage.deleteAsrModel(spec.id)
                             refreshTick++
+                        },
+                    )
+                }
+            }
+            }
+
+            // 5. Input behaviour (text post-processing before commit)
+            if (currentPage == SettingsPage.INPUT) {
+            SectionCard(title = "输入设置") {
+                Text(
+                    text = "控制语音识别/润色结果写入输入框前的文本整理。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("去掉句尾句号", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "自动删除结果末尾的「。」或「.」，句中的句号保留",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = settings.stripTrailingPeriod,
+                        onCheckedChange = { checked ->
+                            settings = settingsStore.update {
+                                it.copy(stripTrailingPeriod = checked)
+                            }
                         },
                     )
                 }

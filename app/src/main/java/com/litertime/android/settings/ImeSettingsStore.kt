@@ -31,6 +31,8 @@ data class ImeSettings(
     val onlineModelName: String = "gpt-4o-mini",
     /** When enabled, every AI request is persisted under `files/ai-request-logs/`. */
     val debugRequestLoggingEnabled: Boolean = false,
+    /** When enabled, a sentence-final period in the generated text is dropped before committing. */
+    val stripTrailingPeriod: Boolean = false,
     /** Unified system prompt. Blank keeps the built-in default from `PromptTemplates`. */
     val systemPromptOverride: String = "",
     /** Per-mode user prompt overrides. Blank keeps the built-in default for that mode. */
@@ -95,6 +97,7 @@ class ImeSettingsStore(private val appFilesDir: File) {
             onlineApiKey = props.getProperty("onlineApiKey", ""),
             onlineModelName = props.getProperty("onlineModelName", "gpt-4o-mini"),
             debugRequestLoggingEnabled = props.getProperty("debugRequestLoggingEnabled", "false").toBoolean(),
+            stripTrailingPeriod = props.getProperty("stripTrailingPeriod", "false").toBoolean(),
             systemPromptOverride = props.getProperty("promptSystem", ""),
             userPromptWhisperRaw = props.getProperty("promptUserWhisperRaw", ""),
             userPromptPolishNormal = props.getProperty("promptUserPolishNormal", ""),
@@ -127,6 +130,7 @@ class ImeSettingsStore(private val appFilesDir: File) {
             setProperty("onlineApiKey", settings.onlineApiKey)
             setProperty("onlineModelName", settings.onlineModelName)
             setProperty("debugRequestLoggingEnabled", settings.debugRequestLoggingEnabled.toString())
+            setProperty("stripTrailingPeriod", settings.stripTrailingPeriod.toString())
             setProperty("promptSystem", settings.systemPromptOverride)
             setProperty("promptUserWhisperRaw", settings.userPromptWhisperRaw)
             setProperty("promptUserPolishNormal", settings.userPromptPolishNormal)

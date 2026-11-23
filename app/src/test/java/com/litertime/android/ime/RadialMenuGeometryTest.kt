@@ -84,4 +84,56 @@ class RadialMenuGeometryTest {
         assertTrue(dist <= radius + 0.1f)
         assertEquals(1f, eval.distanceRatio, 0.01f)
     }
+
+    @Test
+    fun whisperDragMenuOnlyOffersUnloadWhileResident() {
+        assertTrue(
+            RadialMenuGeometry.dragAppActions(
+                source = MicSource.WHISPER,
+                whisperLoaded = false,
+                gemmaLoaded = false,
+                gemmaLoadedWithGpu = false,
+            ).isEmpty(),
+        )
+        assertEquals(
+            listOf(DragAppAction.UNLOAD_WHISPER),
+            RadialMenuGeometry.dragAppActions(
+                source = MicSource.WHISPER,
+                whisperLoaded = true,
+                gemmaLoaded = false,
+                gemmaLoadedWithGpu = false,
+            ),
+        )
+    }
+
+    @Test
+    fun gemmaDragMenuTracksResidencyAndBackend() {
+        assertEquals(
+            listOf(DragAppAction.LOAD_GEMMA_GPU),
+            RadialMenuGeometry.dragAppActions(
+                source = MicSource.GEMMA,
+                whisperLoaded = false,
+                gemmaLoaded = false,
+                gemmaLoadedWithGpu = false,
+            ),
+        )
+        assertEquals(
+            listOf(DragAppAction.RELOAD_GEMMA_GPU, DragAppAction.UNLOAD_GEMMA),
+            RadialMenuGeometry.dragAppActions(
+                source = MicSource.GEMMA,
+                whisperLoaded = true,
+                gemmaLoaded = true,
+                gemmaLoadedWithGpu = false,
+            ),
+        )
+        assertEquals(
+            listOf(DragAppAction.UNLOAD_GEMMA),
+            RadialMenuGeometry.dragAppActions(
+                source = MicSource.GEMMA,
+                whisperLoaded = false,
+                gemmaLoaded = true,
+                gemmaLoadedWithGpu = true,
+            ),
+        )
+    }
 }

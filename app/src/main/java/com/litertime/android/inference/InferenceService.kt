@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.Process
 import android.os.RemoteCallbackList
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -49,9 +50,11 @@ private const val NOTIFICATION_ID = 1001
 private const val ACTION_UNLOAD_MODEL = "com.litertime.android.inference.ACTION_UNLOAD_MODEL"
 
 /**
- * Isolated `:inference` Foreground Service hosting either Sherpa-ONNX Whisper/ASR OR LiteRT-LM
- * Gemma 4 (mutually exclusive) so weights remain resident across IME hide/show cycles until the
- * user explicitly taps "卸载模型" on the persistent notification or in Settings.
+ * Isolated `:inference` Foreground Service hosting Sherpa-ONNX Whisper/ASR and LiteRT-LM Gemma 4.
+ *
+ * Both engines may stay resident at the same time (no mutual exclusion); weights remain loaded
+ * across IME hide/show cycles until the user explicitly unloads one via the mic drag-down menu,
+ * the persistent notification, or the settings screen.
  */
 class InferenceService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -67,10 +70,13 @@ class InferenceService : Service() {
     private lateinit var requestLogStore: AiRequestLogStore
 
     @Volatile
-    private var loadedEngineType: String = "NONE"
+    private var asrModelId: String = ""
 
     @Volatile
-    private var loadedModelId: String = ""
+    private var llmModelId: String = ""
+
+    @Volatile
+    private var llmLoadedWithGpu: Boolean = false
 
     @Volatile
     private var currentStatusText: String = "未加载模型"
@@ -79,9 +85,7 @@ class InferenceService : Service() {
         override fun registerCallback(callback: IInferenceCallback?) {
             if (callback != null) {
                 callbacks.register(callback)
-                runCatching {
-                    callback.onStatusChanged(currentStatusText, loadedEngineType, loadedModelId)
-                }
+                runCatching { callback.onStatusChanged(buildStateJson()) }
             }
         }
 
@@ -91,11 +95,18 @@ class InferenceService : Service() {
             }
         }
 
-        override fun preloadModel(engineType: String?, modelId: String?) {
+        override fun preloadModel(engineType: String?, modelId: String?, forceGpu: Boolean) {
             val type = engineType ?: return
             val id = modelId ?: return
             serviceScope.launch {
-                ensureExclusiveBackendLoaded(type, id)
+                ensureBackendLoaded(type, id, forceGpu)
+            }
+        }
+
+        override fun unloadEngine(engineType: String?) {
+            val type = engineType ?: return
+            serviceScope.launch {
+                unloadEngineInternal(type)
             }
         }
 
@@ -105,13 +116,7 @@ class InferenceService : Service() {
             }
         }
 
-        override fun getLoadedStateJson(): String {
-            return JSONObject().apply {
-                put("status", currentStatusText)
-                put("engineType", loadedEngineType)
-                put("modelId", loadedModelId)
-            }.toString()
-        }
+        override fun getLoadedStateJson(): String = buildStateJson()
 
         override fun runRequest(
             requestId: String?,
@@ -208,7 +213,7 @@ class InferenceService : Service() {
                         return@launch
                     }
 
-                    val loaded = ensureExclusiveBackendLoaded(type, id)
+                    val loaded = ensureBackendLoaded(type, id)
                     if (!loaded) {
                         broadcastError(reqId, currentStatusText)
                         recorder?.finish("", "error", currentStatusText)
@@ -283,59 +288,132 @@ class InferenceService : Service() {
         super.onDestroy()
     }
 
-    private suspend fun ensureExclusiveBackendLoaded(engineType: String, modelId: String): Boolean {
+    private suspend fun ensureBackendLoaded(
+        engineType: String,
+        modelId: String,
+        forceGpu: Boolean = false,
+    ): Boolean {
         return engineMutex.withLock {
-            if (loadedEngineType == engineType && loadedModelId == modelId) {
-                return@withLock true
+            if (engineType != "ASR" && engineType != "LLM") {
+                Log.e(TAG, "Unknown engine type: $engineType")
+                updateStatus("未知引擎类型: $engineType")
+                return@withLock false
             }
 
-            // Mutually exclusive residency: unload previous engine before loading the requested one.
-            if (loadedEngineType == "ASR" && engineType != "ASR") {
-                asrBackend.unload()
-                loadedEngineType = "NONE"
-                loadedModelId = ""
-            } else if (loadedEngineType == "LLM" && engineType != "LLM") {
-                gemmaBackend.unload()
-                loadedEngineType = "NONE"
-                loadedModelId = ""
+            // Already resident? ASR only needs the same model; the LLM additionally has to match
+            // the requested backend when the caller explicitly asks for GPU.
+            when (engineType) {
+                "ASR" -> if (asrModelId == modelId) return@withLock true
+                "LLM" -> if (llmModelId == modelId && (!forceGpu || llmLoadedWithGpu)) return@withLock true
             }
 
             val displayTitle = when (engineType) {
                 "ASR" -> ModelCatalog.findAsr(modelId)?.displayName ?: modelId
-                "LLM" -> ModelCatalog.findLlm(modelId)?.displayName ?: modelId
-                else -> modelId
+                else -> ModelCatalog.findLlm(modelId)?.displayName ?: modelId
             }
 
-            updateStatusAndNotification("正在加载 $displayTitle...", "LOADING", modelId)
+            updateStatus("正在加载 $displayTitle...")
             promoteToForeground("正在加载 $displayTitle...")
 
             try {
-                when (engineType) {
-                    "ASR" -> asrBackend.ensureLoaded(modelId) { msg ->
-                        updateStatusAndNotification(msg, "LOADING", modelId)
-                    }
-                    "LLM" -> gemmaBackend.ensureLoaded(modelId) { msg ->
-                        updateStatusAndNotification(msg, "LOADING", modelId)
-                    }
-                    else -> throw IllegalArgumentException("未知引擎类型: $engineType")
+                if (forceGpu) {
+                    // An explicit "GPU 加载/重载" gesture wins over both the saved toggle and a
+                    // stale crash marker; the marker is rewritten by the backend before loading,
+                    // so a real GPU crash still downgrades the next attempt.
+                    settingsStore.update { it.copy(useGpuForLlm = true) }
+                    modelStorage.clearGpuCrashMarker()
                 }
-                loadedEngineType = engineType
-                loadedModelId = modelId
-                val readyText = "$displayTitle 已加载"
-                updateStatusAndNotification(readyText, engineType, modelId)
+                when (engineType) {
+                    "ASR" -> {
+                        asrModelId = ""
+                        asrBackend.ensureLoaded(modelId) { msg ->
+                            updateStatus(msg)
+                        }
+                        asrModelId = modelId
+                    }
+                    "LLM" -> {
+                        llmModelId = ""
+                        llmLoadedWithGpu = false
+                        gemmaBackend.ensureLoaded(modelId, forceGpu) { msg ->
+                            updateStatus(msg)
+                        }
+                        llmModelId = modelId
+                        llmLoadedWithGpu = gemmaBackend.loadedWithGpu
+                    }
+                }
+                val readyText = if (engineType == "LLM") {
+                    "$displayTitle 已加载 (${if (llmLoadedWithGpu) "GPU" else "CPU"})"
+                } else {
+                    "$displayTitle 已加载"
+                }
+                updateStatus(readyText)
                 promoteToForeground(readyText)
                 true
             } catch (t: Throwable) {
                 Log.e(TAG, "Failed to load $engineType:$modelId", t)
-                loadedEngineType = "NONE"
-                loadedModelId = ""
+                if (engineType == "ASR") {
+                    asrModelId = ""
+                } else {
+                    llmModelId = ""
+                    llmLoadedWithGpu = false
+                }
                 val errText = t.message ?: "模型加载失败"
-                updateStatusAndNotification(errText, "NONE", "")
+                updateStatus(errText)
                 promoteToForeground("加载失败：$errText")
                 false
             }
         }
     }
+
+    private suspend fun unloadEngineInternal(engineType: String) {
+        engineMutex.withLock {
+            val displayTitle = when (engineType) {
+                "ASR" -> asrModelId.ifBlank { "Whisper" }
+                    .let { ModelCatalog.findAsr(it)?.displayName ?: it }
+                "LLM" -> llmModelId.ifBlank { "Gemma 4" }
+                    .let { ModelCatalog.findLlm(it)?.displayName ?: it }
+                else -> return@withLock
+            }
+            when (engineType) {
+                "ASR" -> {
+                    asrBackend.unload()
+                    asrModelId = ""
+                }
+                "LLM" -> {
+                    gemmaBackend.unload()
+                    llmModelId = ""
+                    llmLoadedWithGpu = false
+                }
+            }
+            val text = if (asrModelId.isBlank() && llmModelId.isBlank()) {
+                "$displayTitle 已卸载 · 当前未驻留任何模型"
+            } else {
+                "$displayTitle 已卸载 · ${residentSummary()}"
+            }
+            updateStatus(text)
+            promoteToForeground(text)
+        }
+    }
+
+    private fun residentSummary(): String {
+        val parts = mutableListOf<String>()
+        if (asrModelId.isNotBlank()) {
+            parts += ModelCatalog.findAsr(asrModelId)?.displayName ?: asrModelId
+        }
+        if (llmModelId.isNotBlank()) {
+            val name = ModelCatalog.findLlm(llmModelId)?.displayName ?: llmModelId
+            parts += "$name (${if (llmLoadedWithGpu) "GPU" else "CPU"})"
+        }
+        return if (parts.isEmpty()) "当前未驻留任何模型" else "当前驻留 " + parts.joinToString(" + ")
+    }
+
+    private fun buildStateJson(): String = JSONObject().apply {
+        put("status", currentStatusText)
+        put("asr", asrModelId)
+        put("llm", llmModelId)
+        put("llmGpu", llmLoadedWithGpu)
+        put("pid", Process.myPid())
+    }.toString()
 
     private suspend fun runStreamingBackend(
         backend: TextGenerationBackend,
@@ -348,7 +426,7 @@ class InferenceService : Service() {
         try {
             backend.generateStream(request).collect { event ->
                 when (event) {
-                    is GenerationEvent.Status -> updateStatusOnly(event.message)
+                    is GenerationEvent.Status -> updateStatus(event.message)
                     is GenerationEvent.Token -> {
                         output.append(event.delta)
                         broadcastToken(request.requestId, event.delta)
@@ -382,9 +460,10 @@ class InferenceService : Service() {
             activeRequestJobs.clear()
             asrBackend.unload()
             gemmaBackend.unload()
-            loadedEngineType = "NONE"
-            loadedModelId = ""
-            updateStatusAndNotification("模型已卸载", "NONE", "")
+            asrModelId = ""
+            llmModelId = ""
+            llmLoadedWithGpu = false
+            updateStatus("模型已卸载")
         }
         if (stopService) {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -392,14 +471,9 @@ class InferenceService : Service() {
         }
     }
 
-    private fun updateStatusOnly(status: String) {
+    private fun updateStatus(status: String) {
         currentStatusText = status
-        broadcastStatus(status, loadedEngineType, loadedModelId)
-    }
-
-    private fun updateStatusAndNotification(status: String, engineType: String, modelId: String) {
-        currentStatusText = status
-        broadcastStatus(status, engineType, modelId)
+        broadcastState()
     }
 
     private fun promoteToForeground(contentText: String) {
@@ -454,13 +528,14 @@ class InferenceService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    private fun broadcastStatus(status: String, engineType: String, modelId: String) {
+    private fun broadcastState() {
+        val stateJson = buildStateJson()
         synchronized(callbacks) {
             val count = callbacks.beginBroadcast()
             try {
                 for (i in 0 until count) {
                     runCatching {
-                        callbacks.getBroadcastItem(i).onStatusChanged(status, engineType, modelId)
+                        callbacks.getBroadcastItem(i).onStatusChanged(stateJson)
                     }
                 }
             } finally {

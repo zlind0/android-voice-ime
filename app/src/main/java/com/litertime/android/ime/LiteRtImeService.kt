@@ -26,7 +26,9 @@ import com.litertime.android.audio.WavEncoder
 import com.litertime.android.inference.InferenceClient
 import com.litertime.android.inference.StreamListener
 import com.litertime.android.pipeline.VoiceMode
+import com.litertime.android.settings.ImeSettingsStore
 import com.litertime.android.settings.LlmProviderType
+import com.litertime.android.storage.ModelCatalog
 import com.litertime.android.ui.MainActivity
 import java.io.File
 import java.util.UUID
@@ -48,6 +50,7 @@ class LiteRtImeService : InputMethodService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val audioCapture = AudioCaptureManager()
     private val commitGuard = StreamingCommitGuard()
+    private val trailingPeriodStripper = TrailingPeriodStripper()
 
     private lateinit var inferenceClient: InferenceClient
     private lateinit var overlayView: VoiceImeOverlayView
@@ -56,8 +59,14 @@ class LiteRtImeService : InputMethodService() {
     private val streamListener = object : StreamListener {
         override fun onToken(requestId: String, delta: String) {
             mainHandler.post {
-                if (commitGuard.shouldCommit(requestId)) {
-                    currentInputConnection?.commitText(delta, 1)
+                if (!commitGuard.shouldCommit(requestId)) return@post
+                val text = if (settingsStore().getSettings().stripTrailingPeriod) {
+                    trailingPeriodStripper.consume(delta)
+                } else {
+                    delta
+                }
+                if (text.isNotEmpty()) {
+                    currentInputConnection?.commitText(text, 1)
                 }
             }
         }
@@ -65,6 +74,17 @@ class LiteRtImeService : InputMethodService() {
         override fun onComplete(requestId: String) {
             mainHandler.post {
                 if (commitGuard.activeId() == requestId) {
+                    if (commitGuard.shouldCommit(requestId)) {
+                        val tail = if (settingsStore().getSettings().stripTrailingPeriod) {
+                            trailingPeriodStripper.flush()
+                        } else {
+                            ""
+                        }
+                        if (tail.isNotEmpty()) {
+                            currentInputConnection?.commitText(tail, 1)
+                        }
+                    }
+                    trailingPeriodStripper.reset()
                     commitGuard.complete(requestId)
                     overlayView.updateStatusBanner("", cancellable = false)
                 }
@@ -74,6 +94,7 @@ class LiteRtImeService : InputMethodService() {
         override fun onError(requestId: String, errorMessage: String) {
             mainHandler.post {
                 if (commitGuard.activeId() == requestId) {
+                    trailingPeriodStripper.reset()
                     commitGuard.complete(requestId)
                     overlayView.updateStatusBanner("", cancellable = false)
                     Toast.makeText(this@LiteRtImeService, errorMessage, Toast.LENGTH_SHORT).show()
@@ -180,6 +201,42 @@ class LiteRtImeService : InputMethodService() {
                     dispatchVoiceRequest(source, action, pcmBytes)
                 }
 
+                override fun onDragAppAction(source: MicSource, action: DragAppAction) {
+                    // The drag-down menu manages model residency, so the captured audio is dropped.
+                    audioCapture.cancel()
+                    when (action) {
+                        DragAppAction.UNLOAD_WHISPER -> {
+                            inferenceClient.unloadEngine("ASR")
+                            Toast.makeText(
+                                this@LiteRtImeService,
+                                "正在卸载 Whisper 模型",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        DragAppAction.UNLOAD_GEMMA -> {
+                            inferenceClient.unloadEngine("LLM")
+                            Toast.makeText(
+                                this@LiteRtImeService,
+                                "正在卸载 Gemma 4 模型",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        DragAppAction.RELOAD_GEMMA_GPU,
+                        DragAppAction.LOAD_GEMMA_GPU -> {
+                            inferenceClient.preloadModel(
+                                engineType = "LLM",
+                                modelId = resolveLocalLlmModelId(),
+                                forceGpu = true,
+                            )
+                            Toast.makeText(
+                                this@LiteRtImeService,
+                                "正在用 GPU 加载 Gemma 4…",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                }
+
                 override fun onCancelActiveGeneration() {
                     cancelActiveRequest()
                 }
@@ -216,8 +273,10 @@ class LiteRtImeService : InputMethodService() {
             inferenceClient.statusState.collectLatest { state ->
                 val settings = (application as LiteRtImeApp).settingsStore.getSettings()
                 overlayView.updateLoadedState(
-                    engineType = state.loadedEngineType,
-                    modelId = state.loadedModelId,
+                    isWhisperLoaded = state.asrLoaded,
+                    isGemmaLoaded = state.llmLoaded,
+                    isGemmaGpu = state.llmLoadedWithGpu,
+                    inferencePid = state.inferencePid,
                     isOnlineMode = settings.llmProvider != LlmProviderType.LOCAL_LITERT,
                 )
                 if (commitGuard.activeId() != null && state.statusText.isNotBlank()) {
@@ -263,6 +322,21 @@ class LiteRtImeService : InputMethodService() {
         startActivity(intent)
     }
 
+    private fun settingsStore(): ImeSettingsStore = (application as LiteRtImeApp).settingsStore
+
+    /** Mirrors the LLM model resolution used when dispatching a normal voice request. */
+    private fun resolveLocalLlmModelId(): String {
+        val app = application as LiteRtImeApp
+        val storage = app.modelStorage
+        val settings = app.settingsStore.getSettings()
+        val configuredSpec = ModelCatalog.findLlm(settings.activeLlmModelId)
+        return if (configuredSpec != null && storage.isLlmInstalled(configuredSpec)) {
+            configuredSpec.id
+        } else {
+            storage.findFirstInstalledLlmId() ?: settings.activeLlmModelId
+        }
+    }
+
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
         if (!restarting) {
@@ -289,6 +363,7 @@ class LiteRtImeService : InputMethodService() {
 
     private fun cancelActiveRequest() {
         val activeId = commitGuard.beginSession() ?: commitGuard.cancelActive()
+        trailingPeriodStripper.reset()
         if (activeId != null) {
             inferenceClient.cancelRequest(activeId)
         }
@@ -329,16 +404,12 @@ class LiteRtImeService : InputMethodService() {
             modelId = settings.onlineModelName
         } else {
             backendType = "LLM"
-            val configuredSpec = com.litertime.android.storage.ModelCatalog.findLlm(settings.activeLlmModelId)
-            modelId = if (configuredSpec != null && storage.isLlmInstalled(configuredSpec)) {
-                configuredSpec.id
-            } else {
-                storage.findFirstInstalledLlmId() ?: settings.activeLlmModelId
-            }
+            modelId = resolveLocalLlmModelId()
         }
 
         val requestId = UUID.randomUUID().toString()
         commitGuard.startRequest(requestId)
+        trailingPeriodStripper.reset()
         overlayView.updateStatusBanner(
             if (backendType == "ASR") "正在识别语音..." else "正在思考与润色...",
             cancellable = true,

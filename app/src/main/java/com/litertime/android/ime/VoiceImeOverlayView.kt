@@ -2,6 +2,7 @@ package com.litertime.android.ime
 
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -19,6 +20,9 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
+import java.io.File
+import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
@@ -28,9 +32,13 @@ import kotlin.math.sin
  * Bottom-anchored IME view containing:
  * - A full-width rectangular panel that reaches the bottom of the screen:
  *   [Switch Keyboard] [Whisper Mic] [Gemma 4 Mic] [Backspace]
- * - A status hint row directly below the two mic buttons, and a live memory readout
- *   in the bottom strip that stays clear of the system safe area.
- * - An expandable radial semicircle disc above the panel with a draggable circular knob.
+ * - A status hint row directly below the two mic buttons, and a live readout of the
+ *   `:inference` process memory in the bottom strip that stays clear of the system safe area.
+ *   The red "停止" pill sits to the left of that readout.
+ * - An expandable radial semicircle disc above the panel with a draggable circular knob, plus a
+ *   persistent "tray" of app-action bubbles (unload model, reload Gemma with GPU) filling the
+ *   lower control area below the mic row. Both are visible for the whole gesture: the knob moves
+ *   freely across the disc, the mic row and the tray, and the bubble under the finger wins.
  *
  * Only the strip above the panel stays transparent so the host app shows through.
  * `LiteRtImeService` adjusts `onComputeInsets().touchableRegion` dynamically via
@@ -49,6 +57,12 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         fun onEnterClick()
         fun onStartRecording(source: MicSource): Boolean
         fun onFinishRecording(source: MicSource, action: RadialAction)
+
+        /**
+         * The mic drag ended below the mic row on an app-level action (unload / GPU reload).
+         * The recording is discarded; no audio request is dispatched.
+         */
+        fun onDragAppAction(source: MicSource, action: DragAppAction)
         fun onCancelActiveGeneration()
         fun onTouchableRegionChanged()
     }
@@ -63,12 +77,36 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     private fun sp(value: Float): Float =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, value, resources.displayMetrics)
 
+    // Page size used to convert /proc/<pid>/statm resident pages, derived from /proc/self so
+    // 16 KB-page kernels are handled without touching @hide OsConstants fields.
+    private val pageSizeBytes: Long by lazy {
+        runCatching {
+            val totalPages = File("/proc/self/statm")
+                .readText()
+                .trim()
+                .split(' ')
+                .firstOrNull()
+                ?.toLongOrNull()
+            val vmSizeKb = File("/proc/self/status")
+                .readLines()
+                .firstOrNull { it.startsWith("VmSize:") }
+                ?.split(Regex("\\s+"))
+                ?.getOrNull(1)
+                ?.toLongOrNull()
+            if (totalPages != null && totalPages > 0L && vmSizeKb != null && vmSizeKb > 0L) {
+                vmSizeKb * 1024L / totalPages
+            } else {
+                4096L
+            }
+        }.getOrDefault(4096L)
+    }
+
     // Layout: one full-width rectangular panel anchored to the bottom of the screen.
     // The transparent strip above the panel hosts the radial gesture disc.
     private val radialTopSpacePx = dp(140f).toInt()
     private val panelTopPaddingPx = dp(12f)
     private val micButtonHeightPx = dp(104f) // 2× the previous 52dp
-    private val belowMicRegionPx = dp(39f) // 1.5× the previous ~26dp below the mic row
+    private val belowMicRegionPx = dp(48f) // status hint row + memory/cancel strip below the mic row
     private val baseWindowHeightPx =
         (radialTopSpacePx + panelTopPaddingPx + micButtonHeightPx + belowMicRegionPx).toInt()
     private val radialRadiusPx = dp(132f)
@@ -83,9 +121,11 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     private var safeLeftInsetPx: Int = 0
     private var safeRightInsetPx: Int = 0
 
-    // Loaded state indicators
-    private var loadedEngineType: String = "NONE"
-    private var loadedModelId: String = ""
+    // Loaded state indicators (Whisper and Gemma may be resident at the same time).
+    private var whisperLoaded: Boolean = false
+    private var gemmaLoaded: Boolean = false
+    private var gemmaLoadedWithGpu: Boolean = false
+    private var inferencePid: Int = 0
     private var onlineModeEnabled: Boolean = false
 
     // Generation status banner
@@ -101,6 +141,14 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     private var currentAction: RadialAction = RadialAction.NONE
     private var expandProgress: Float = 0f
     private var voiceAmplitude: Float = 0f
+
+    // Down-drag app-action targets (unload / GPU reload) that live in the lower control area,
+// below the mic row. They are laid out and drawn for the whole gesture so the user sees the
+// full option map immediately instead of only after dragging there.
+    private var trayActions: List<DragAppAction> = emptyList()
+    private var trayChips: List<Pair<DragAppAction, RectF>> = emptyList()
+    private var selectedTrayAction: DragAppAction? = null
+    private var isTrayTargeted: Boolean = false
 
     private var expandAnimator: ValueAnimator? = null
 
@@ -272,6 +320,18 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         color = 0xFF8B5CF6.toInt()
         style = Paint.Style.FILL
     }
+    private val chipBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF2A3140.toInt()
+        style = Paint.Style.FILL
+    }
+    private val chipSelectedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF2563EB.toInt()
+        style = Paint.Style.FILL
+    }
+    private val chipDangerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFB91C1C.toInt()
+        style = Paint.Style.FILL
+    }
     private val amplitudeRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0x6693C5FD
         style = Paint.Style.STROKE
@@ -385,11 +445,19 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         val statusTop = micBottom + dp(1f)
         val statusBottom = statusTop + statusRowHeightPx
         cancelBannerRect.set(contentLeft + dp(4f), statusTop, contentRight - dp(4f), statusBottom)
+
+        // Bottom strip: the red "停止" pill sits to the LEFT of the memory readout,
+        // both hugging the bottom-right corner of the panel.
+        val stripBottom = barCardRect.bottom - safeBottomInsetPx - dp(2f)
+        val stripTop = stripBottom - dp(22f)
+        val memoryReserveWidth = memoryTextPaint.measureText("内存 9999 MB")
+        val memoryLeft = contentRight - memoryReserveWidth
+        val cancelRight = memoryLeft - dp(10f)
         cancelBannerButtonRect.set(
-            cancelBannerRect.right - dp(64f),
-            statusTop + dp(2f),
-            cancelBannerRect.right - dp(4f),
-            statusBottom - dp(2f),
+            (cancelRight - dp(48f)).coerceAtLeast(contentLeft),
+            stripTop,
+            cancelRight.coerceAtLeast(contentLeft),
+            stripBottom,
         )
     }
 
@@ -404,9 +472,17 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         return height
     }
 
-    fun updateLoadedState(engineType: String, modelId: String, isOnlineMode: Boolean) {
-        loadedEngineType = engineType
-        loadedModelId = modelId
+    fun updateLoadedState(
+        isWhisperLoaded: Boolean,
+        isGemmaLoaded: Boolean,
+        isGemmaGpu: Boolean,
+        inferencePid: Int,
+        isOnlineMode: Boolean,
+    ) {
+        whisperLoaded = isWhisperLoaded
+        gemmaLoaded = isGemmaLoaded
+        gemmaLoadedWithGpu = isGemmaGpu
+        this.inferencePid = inferencePid
         onlineModeEnabled = isOnlineMode
         invalidate()
     }
@@ -434,13 +510,15 @@ class VoiceImeOverlayView @JvmOverloads constructor(
 
         drawBottomBar(canvas)
 
-        if (statusMessage.isNotEmpty() && !isRadialExpanded) {
-            drawStatusBanner(canvas)
+        if (!isRadialExpanded) {
+            if (statusMessage.isNotEmpty()) {
+                drawStatusBanner(canvas)
+            }
+            drawMemoryUsage(canvas)
         }
 
-        drawMemoryUsage(canvas)
-
         if (isRadialExpanded && activeSource != null) {
+            drawTrayTargets(canvas)
             drawRadialDisc(canvas, activeSource!!)
         }
     }
@@ -460,21 +538,59 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     }
 
     private fun drawMemoryUsage(canvas: Canvas) {
-        val label = if (memoryUsageMb > 0) "内存 $memoryUsageMb MB" else "内存 --"
+        val label = if (memoryUsageMb > 0) formatMemoryLabel(memoryUsageMb) else "内存 --"
         val x = width - safeRightInsetPx - barPaddingHPx
-        val baseline = barCardRect.bottom - safeBottomInsetPx - dp(4f)
+        val baseline = barCardRect.bottom - safeBottomInsetPx - dp(6f)
         canvas.drawText(label, x, baseline, memoryTextPaint)
     }
 
+    private fun formatMemoryLabel(mb: Int): String =
+        if (mb >= 1024) String.format(Locale.US, "内存 %.1f GB", mb / 1024f) else "内存 $mb MB"
+
+    /**
+     * PSS of the `:inference` process, which is where the model weights actually live.
+     * Falls back to /proc RSS, then to this UI process's own PSS when the pid is unknown.
+     */
     private fun readMemoryUsageMb(): Int {
-        return try {
-            val info = Debug.MemoryInfo()
-            Debug.getMemoryInfo(info)
-            info.totalPss / 1024
-        } catch (_: Throwable) {
-            val runtime = Runtime.getRuntime()
-            ((runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)).toInt()
+        val pid = inferencePid
+        if (pid > 0) {
+            readProcessPssMb(pid)?.let { return it }
+            readProcessRssMb(pid)?.let { return it }
         }
+        return readOwnProcessPssMb() ?: 0
+    }
+
+    private fun readProcessPssMb(pid: Int): Int? = try {
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val pssKb = manager?.getProcessMemoryInfo(intArrayOf(pid))?.firstOrNull()?.totalPss ?: 0
+        if (pssKb > 0) pssKb / 1024 else null
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun readProcessRssMb(pid: Int): Int? = try {
+        val residentPages = File("/proc/$pid/statm")
+            .readText()
+            .trim()
+            .split(' ')
+            .getOrNull(1)
+            ?.toLongOrNull()
+        if (residentPages == null || residentPages <= 0L) {
+            null
+        } else {
+            ((residentPages * pageSizeBytes) / (1024L * 1024L)).toInt()
+        }
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun readOwnProcessPssMb(): Int? = try {
+        val info = Debug.MemoryInfo()
+        Debug.getMemoryInfo(info)
+        if (info.totalPss > 0) info.totalPss / 1024 else null
+    } catch (_: Throwable) {
+        val runtime = Runtime.getRuntime()
+        ((runtime.totalMemory() - runtime.freeMemory()) / (1024L * 1024L)).toInt()
     }
 
     private fun drawBottomBar(canvas: Canvas) {
@@ -502,7 +618,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
 
         // Whisper mic: original dark blue fill, white icon, no text.
         canvas.drawRoundRect(whisperBtnRect, micRadius, micRadius, whisperBtnPaint)
-        if (loadedEngineType == "ASR") {
+        if (whisperLoaded) {
             canvas.drawRoundRect(whisperBtnRect, micRadius, micRadius, activeBtnStrokePaint)
         }
         drawScaledMicGlyph(
@@ -513,17 +629,17 @@ class VoiceImeOverlayView @JvmOverloads constructor(
             strokePaint = whiteGlyphStrokePaint,
             fillPaint = whiteGlyphFillPaint,
         )
-        if (loadedEngineType == "ASR") {
+        if (whisperLoaded) {
             canvas.drawCircle(whisperBtnRect.right - dp(12f), whisperBtnRect.top + dp(12f), dp(4f), loadedDotPaint)
         }
 
         // AI mic: dark purple fill, light rainbow mic glyph plus "AI".
         canvas.drawRoundRect(gemmaBtnRect, micRadius, micRadius, gemmaBtnPaint)
-        if (loadedEngineType == "LLM") {
+        if (gemmaLoaded) {
             canvas.drawRoundRect(gemmaBtnRect, micRadius, micRadius, gemmaStrokePaint)
         }
         drawAiMicContent(canvas, gemmaBtnRect, micGlyphHeight)
-        if (loadedEngineType == "LLM") {
+        if (gemmaLoaded) {
             canvas.drawCircle(gemmaBtnRect.right - dp(12f), gemmaBtnRect.top + dp(12f), dp(4f), loadedDotPaint)
         }
     }
@@ -656,6 +772,124 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         canvas.drawLine(arrowX, shaftY, arrowX + dp(5f), shaftY + dp(5f), iconPaint)
     }
 
+    private fun dragActionsFor(source: MicSource): List<DragAppAction> =
+        RadialMenuGeometry.dragAppActions(
+            source = source,
+            whisperLoaded = whisperLoaded,
+            gemmaLoaded = gemmaLoaded,
+            gemmaLoadedWithGpu = gemmaLoadedWithGpu,
+        )
+
+    private fun micRowBottom(): Float = whisperBtnRect.bottom
+
+    /** The tray bubbles define the trigger zone; a couple of dp of slop keep it forgiving. */
+    private fun trayActivationY(): Float =
+        (trayChips.firstOrNull()?.second?.top ?: (micRowBottom() + dp(4f))) - dp(2f)
+
+    private fun prepareTray(source: MicSource) {
+        trayActions = dragActionsFor(source)
+        trayChips = emptyList()
+        selectedTrayAction = null
+        isTrayTargeted = false
+        layoutTrayChips(trayActions)
+    }
+
+    private fun clearTray() {
+        isTrayTargeted = false
+        selectedTrayAction = null
+        trayActions = emptyList()
+        trayChips = emptyList()
+    }
+
+    /** Splits the whole lower control area below the mic row into equal, edge-to-edge bubbles. */
+    private fun layoutTrayChips(actions: List<DragAppAction>) {
+        trayChips = emptyList()
+        if (actions.isEmpty() || width <= 0) return
+        val left = safeLeftInsetPx + barPaddingHPx
+        val right = (width - safeRightInsetPx - barPaddingHPx).coerceAtLeast(left + dp(120f))
+        val chipTop = micRowBottom() + dp(4f)
+        val chipBottom = barCardRect.bottom - safeBottomInsetPx - dp(2f)
+        if (chipBottom - chipTop < dp(16f)) return
+        val gap = dp(6f)
+        val available = (right - left).coerceAtLeast(dp(1f))
+        val chipWidth = (available - gap * (actions.size - 1)) / actions.size
+        if (chipWidth <= 0f) return
+        var x = left
+        val chips = mutableListOf<Pair<DragAppAction, RectF>>()
+        actions.forEachIndexed { index, action ->
+            val chipRight = if (index == actions.lastIndex) right else x + chipWidth
+            chips += action to RectF(x, chipTop, chipRight, chipBottom)
+            x = chipRight + gap
+        }
+        trayChips = chips
+    }
+
+    /** Chooses the bubble under the finger; null when the finger is still above the tray. */
+    private fun selectTrayActionAt(x: Float, y: Float): DragAppAction? {
+        if (trayChips.isEmpty()) return null
+        if (y < trayChips.first().second.top - dp(2f)) return null
+        return trayChips.minByOrNull { abs(it.second.centerX() - x) }?.first
+    }
+
+    private fun trayHint(action: DragAppAction): String = when (action) {
+        DragAppAction.UNLOAD_WHISPER -> "松手卸载 Whisper"
+        DragAppAction.UNLOAD_GEMMA -> "松手卸载 Gemma 4"
+        DragAppAction.RELOAD_GEMMA_GPU -> "松手用 GPU 重载 Gemma 4"
+        DragAppAction.LOAD_GEMMA_GPU -> "松手用 GPU 加载 Gemma 4"
+    }
+
+    private fun drawTrayTargets(canvas: Canvas) {
+        if (trayChips.isEmpty()) return
+        for ((action, rect) in trayChips) {
+            val isDanger = action == DragAppAction.UNLOAD_WHISPER || action == DragAppAction.UNLOAD_GEMMA
+            val selected = action == selectedTrayAction
+            val background = when {
+                !selected -> chipBgPaint
+                isDanger -> chipDangerPaint
+                else -> chipSelectedPaint
+            }
+            canvas.drawRoundRect(rect, rect.height() / 2f, rect.height() / 2f, background)
+            // Equal-width bubbles: shrink the label instead of overflowing on narrow screens.
+            val previousTextSize = sectorTextPaint.textSize
+            val maxTextWidth = rect.width() - dp(12f)
+            val textWidth = sectorTextPaint.measureText(action.label)
+            if (maxTextWidth > 0f && textWidth > maxTextWidth) {
+                sectorTextPaint.textSize = previousTextSize * (maxTextWidth / textWidth)
+            }
+            val cy = rect.centerY() - (sectorTextPaint.descent() + sectorTextPaint.ascent()) / 2f
+            canvas.drawText(action.label, rect.centerX(), cy, sectorTextPaint)
+            sectorTextPaint.textSize = previousTextSize
+        }
+
+        val selected = selectedTrayAction
+        if (isTrayTargeted && selected != null) {
+            val hintText = trayHint(selected)
+            val pillWidth = pillTextPaint.measureText(hintText) + dp(28f)
+            val centerX = pointerX.coerceIn(pillWidth / 2f + dp(8f), width - pillWidth / 2f - dp(8f))
+            val pillBottom = (trayChips.first().second.top - dp(6f)).coerceAtLeast(dp(34f))
+            scratchRect.set(
+                centerX - pillWidth / 2f,
+                pillBottom - dp(28f),
+                centerX + pillWidth / 2f,
+                pillBottom,
+            )
+            canvas.drawRoundRect(scratchRect, dp(14f), dp(14f), pillBgPaint)
+            val textY = scratchRect.centerY() - (pillTextPaint.descent() + pillTextPaint.ascent()) / 2f
+            canvas.drawText(hintText, centerX, textY, pillTextPaint)
+        }
+    }
+
+    private fun knobFillPaint(source: MicSource): Paint = when {
+        isTrayTargeted -> when (selectedTrayAction) {
+            null -> if (source == MicSource.GEMMA) knobGemmaPaint else knobPaint
+            DragAppAction.UNLOAD_WHISPER, DragAppAction.UNLOAD_GEMMA -> knobCancelPaint
+            else -> knobPaint
+        }
+        currentAction == RadialAction.CANCEL -> knobCancelPaint
+        source == MicSource.GEMMA -> knobGemmaPaint
+        else -> knobPaint
+    }
+
     private fun drawRadialDisc(canvas: Canvas, source: MicSource) {
         val currentR = radialRadiusPx * expandProgress
         if (currentR < 4f) return
@@ -669,9 +903,11 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         }
         canvas.drawPath(basePath, discBgPaint)
 
-        // Highlight active sector or center
+        // Highlight active sector or center (suppressed while the finger is in the lower tray)
         val innerR = currentR * RadialMenuGeometry.CENTER_ZONE_RATIO
-        if (currentAction == RadialAction.CANCEL) {
+        if (isTrayTargeted) {
+            // No semicircle sector is active in this state.
+        } else if (currentAction == RadialAction.CANCEL) {
             val startAngle = if (source == MicSource.WHISPER) 180f else 180f
             val sweepAngle = if (source == MicSource.WHISPER) 180f else 45f
             drawRingSector(canvas, anchorX, anchorY, innerR, currentR, startAngle, sweepAngle, sectorCancelPaint)
@@ -727,42 +963,32 @@ class VoiceImeOverlayView @JvmOverloads constructor(
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.28f, 90f, "普通转写")
         }
 
-        // Floating action pill above disc
-        val hintText = when (currentAction) {
-            RadialAction.CANCEL -> "松手取消本次语音"
-            RadialAction.WHISPER_TRANSCRIBE -> "正在聆听 · Whisper 原样输出"
-            RadialAction.GEMMA_POLISH_NORMAL -> "正在聆听 · 润色为普通表达"
-            RadialAction.GEMMA_POLISH_FORMAL -> "正在聆听 · 润色为正式书面语"
-            RadialAction.GEMMA_SCREENSHOT_INSTRUCTION -> "正在聆听 · 结合截屏执行指令"
-            RadialAction.NONE -> "正在聆听..."
+        // Floating action pill above disc (the tray draws its own pill while targeted)
+        if (!isTrayTargeted) {
+            val hintText = when (currentAction) {
+                RadialAction.CANCEL -> "松手取消本次语音"
+                RadialAction.WHISPER_TRANSCRIBE -> "正在聆听 · Whisper 原样输出"
+                RadialAction.GEMMA_POLISH_NORMAL -> "正在聆听 · 润色为普通表达"
+                RadialAction.GEMMA_POLISH_FORMAL -> "正在聆听 · 润色为正式书面语"
+                RadialAction.GEMMA_SCREENSHOT_INSTRUCTION -> "正在聆听 · 结合截屏执行指令"
+                RadialAction.NONE -> "正在聆听..."
+            }
+            val pillWidth = pillTextPaint.measureText(hintText) + dp(28f)
+            val pillCenterX = anchorX.coerceIn(pillWidth / 2f + dp(8f), width - pillWidth / 2f - dp(8f))
+            val pillBottom = (anchorY - currentR - dp(10f)).coerceAtLeast(dp(34f))
+            scratchRect.set(pillCenterX - pillWidth / 2f, pillBottom - dp(28f), pillCenterX + pillWidth / 2f, pillBottom)
+            canvas.drawRoundRect(scratchRect, dp(14f), dp(14f), pillBgPaint)
+            val textY = scratchRect.centerY() - (pillTextPaint.descent() + pillTextPaint.ascent()) / 2f
+            canvas.drawText(hintText, pillCenterX, textY, pillTextPaint)
         }
-        val pillWidth = pillTextPaint.measureText(hintText) + dp(28f)
-        val pillCenterX = anchorX.coerceIn(pillWidth / 2f + dp(8f), width - pillWidth / 2f - dp(8f))
-        val pillBottom = (anchorY - currentR - dp(10f)).coerceAtLeast(dp(34f))
-        scratchRect.set(pillCenterX - pillWidth / 2f, pillBottom - dp(28f), pillCenterX + pillWidth / 2f, pillBottom)
-        canvas.drawRoundRect(scratchRect, dp(14f), dp(14f), pillBgPaint)
-        val textY = scratchRect.centerY() - (pillTextPaint.descent() + pillTextPaint.ascent()) / 2f
-        canvas.drawText(hintText, pillCenterX, textY, pillTextPaint)
 
-        // Draggable knob at finger with live voice amplitude ring
-        val eval = RadialMenuGeometry.evaluate(
-            anchorX = anchorX,
-            anchorY = anchorY,
-            pointerX = pointerX,
-            pointerY = pointerY,
-            radius = radialRadiusPx,
-            source = source,
-            bottomGracePx = dp(12f),
-        )
+        // Draggable knob: follows the finger freely across the disc, the mic row and the tray.
+        val knobX = pointerX.coerceIn(dp(12f), (width - dp(12f)).coerceAtLeast(dp(12f)))
+        val knobY = pointerY.coerceIn(dp(12f), (height - dp(12f)).coerceAtLeast(dp(12f)))
         val pulseR = knobRadiusPx + dp(6f) + voiceAmplitude * dp(18f)
-        canvas.drawCircle(eval.knobX, eval.knobY, pulseR, amplitudeRingPaint)
-        val activeKnobPaint = when {
-            currentAction == RadialAction.CANCEL -> knobCancelPaint
-            source == MicSource.GEMMA -> knobGemmaPaint
-            else -> knobPaint
-        }
-        canvas.drawCircle(eval.knobX, eval.knobY, knobRadiusPx, activeKnobPaint)
-        drawMicIcon(canvas, eval.knobX, eval.knobY, source == MicSource.GEMMA)
+        canvas.drawCircle(knobX, knobY, pulseR, amplitudeRingPaint)
+        canvas.drawCircle(knobX, knobY, knobRadiusPx, knobFillPaint(source))
+        drawMicIcon(canvas, knobX, knobY, source == MicSource.GEMMA)
     }
 
     private fun drawRingSector(
@@ -848,15 +1074,33 @@ class VoiceImeOverlayView @JvmOverloads constructor(
 
             MotionEvent.ACTION_MOVE -> {
                 if (isRadialExpanded && activeSource != null) {
+                    val src = activeSource!!
                     pointerX = x
                     pointerY = y
+                    // The lower tray is selectable as soon as the finger leaves the mic row.
+                    if (pointerY > trayActivationY() && trayActions.isNotEmpty()) {
+                        isTrayTargeted = true
+                        val picked = selectTrayActionAt(x, y)
+                        if (picked != selectedTrayAction) {
+                            selectedTrayAction = picked
+                            if (picked != null) {
+                                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            }
+                        }
+                        invalidate()
+                        return true
+                    }
+                    if (isTrayTargeted) {
+                        isTrayTargeted = false
+                        selectedTrayAction = null
+                    }
                     val eval = RadialMenuGeometry.evaluate(
                         anchorX = anchorX,
                         anchorY = anchorY,
                         pointerX = pointerX,
                         pointerY = pointerY,
                         radius = radialRadiusPx,
-                        source = activeSource!!,
+                        source = src,
                         bottomGracePx = dp(12f),
                     )
                     if (eval.action != currentAction) {
@@ -885,9 +1129,19 @@ class VoiceImeOverlayView @JvmOverloads constructor(
             MotionEvent.ACTION_UP -> {
                 if (isRadialExpanded && activeSource != null) {
                     val src = activeSource!!
+                    val wasTrayTargeted = isTrayTargeted
+                    val trayAction = selectedTrayAction
                     val finalAction = currentAction
                     endRadialSession()
-                    listener?.onFinishRecording(src, finalAction)
+                    if (wasTrayTargeted) {
+                        if (trayAction != null) {
+                            listener?.onDragAppAction(src, trayAction)
+                        } else {
+                            listener?.onFinishRecording(src, RadialAction.CANCEL)
+                        }
+                    } else {
+                        listener?.onFinishRecording(src, finalAction)
+                    }
                     return true
                 }
                 removeCallbacks(backspaceRepeatRunnable)
@@ -940,6 +1194,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
 
     private fun beginRadialSession(source: MicSource, downX: Float, downY: Float) {
         activeSource = source
+        prepareTray(source)
         val minAnchorX = radialRadiusPx + dp(8f)
         val maxAnchorX = (width - radialRadiusPx - dp(8f)).coerceAtLeast(minAnchorX)
         anchorX = downX.coerceIn(minAnchorX, maxAnchorX)
@@ -976,6 +1231,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         activeSource = null
         currentAction = RadialAction.NONE
         voiceAmplitude = 0f
+        clearTray()
         if (wasActive) {
             listener?.onTouchableRegionChanged()
         }

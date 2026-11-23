@@ -20,6 +20,17 @@ enum class RadialAction(val label: String) {
     CANCEL("取消"),
 }
 
+/**
+ * App-level actions revealed by dragging a mic button *below* the mic row instead of into the
+ * semicircle. Only model residency operations live here; they run without feeding audio to a model.
+ */
+enum class DragAppAction(val label: String) {
+    UNLOAD_WHISPER("卸载 Whisper"),
+    UNLOAD_GEMMA("卸载 Gemma"),
+    RELOAD_GEMMA_GPU("GPU 重载"),
+    LOAD_GEMMA_GPU("GPU 加载"),
+}
+
 data class RadialEvaluation(
     val knobX: Float,
     val knobY: Float,
@@ -108,5 +119,30 @@ object RadialMenuGeometry {
         val x = anchorX + (radius * cos(rad)).toFloat()
         val y = anchorY - (radius * sin(rad)).toFloat()
         return x to y
+    }
+
+    /**
+     * Actions offered when the pressed mic button is dragged below the mic row.
+     *
+     * Whisper only exposes "unload" and only while it is resident. Gemma exposes "load with GPU"
+     * while absent, "reload with GPU" while resident on CPU, and "unload" while resident. The
+     * destructive action is always listed last so a downward flick never unloads by accident.
+     */
+    fun dragAppActions(
+        source: MicSource,
+        whisperLoaded: Boolean,
+        gemmaLoaded: Boolean,
+        gemmaLoadedWithGpu: Boolean,
+    ): List<DragAppAction> = when (source) {
+        MicSource.WHISPER -> if (whisperLoaded) {
+            listOf(DragAppAction.UNLOAD_WHISPER)
+        } else {
+            emptyList()
+        }
+        MicSource.GEMMA -> buildList {
+            if (gemmaLoaded && !gemmaLoadedWithGpu) add(DragAppAction.RELOAD_GEMMA_GPU)
+            if (!gemmaLoaded) add(DragAppAction.LOAD_GEMMA_GPU)
+            if (gemmaLoaded) add(DragAppAction.UNLOAD_GEMMA)
+        }
     }
 }

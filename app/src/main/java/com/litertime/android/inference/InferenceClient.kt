@@ -20,12 +20,44 @@ private const val TAG = "InferenceClient"
 data class InferenceStatusState(
     val bound: Boolean = false,
     val statusText: String = "未加载模型",
-    val loadedEngineType: String = "NONE",
-    val loadedModelId: String = "",
-)
+    val asrModelId: String = "",
+    val llmModelId: String = "",
+    val llmLoadedWithGpu: Boolean = false,
+    /** pid of the `:inference` process, used by the IME to read real model memory (PSS). */
+    val inferencePid: Int = 0,
+) {
+    val asrLoaded: Boolean get() = asrModelId.isNotBlank()
+    val llmLoaded: Boolean get() = llmModelId.isNotBlank()
+
+    val loadedSummary: String
+        get() = when {
+            asrLoaded && llmLoaded -> "ASR+LLM"
+            asrLoaded -> "ASR"
+            llmLoaded -> "LLM"
+            else -> "NONE"
+        }
+
+    val llmBackendLabel: String get() = if (llmLoadedWithGpu) "GPU" else "CPU"
+
+    companion object {
+        fun fromJson(json: String?, bound: Boolean = true): InferenceStatusState {
+            if (json.isNullOrBlank()) return InferenceStatusState(bound = bound)
+            val obj = runCatching { JSONObject(json) }.getOrNull()
+                ?: return InferenceStatusState(bound = bound)
+            return InferenceStatusState(
+                bound = bound,
+                statusText = obj.optString("status", "未加载模型"),
+                asrModelId = obj.optString("asr", ""),
+                llmModelId = obj.optString("llm", ""),
+                llmLoadedWithGpu = obj.optBoolean("llmGpu", false),
+                inferencePid = obj.optInt("pid", 0),
+            )
+        }
+    }
+}
 
 interface StreamListener {
-    fun onStatusChanged(status: String, loadedEngineType: String, loadedModelId: String) = Unit
+    fun onStatusChanged(status: String) = Unit
     fun onToken(requestId: String, delta: String)
     fun onComplete(requestId: String)
     fun onError(requestId: String, errorMessage: String)
@@ -45,21 +77,10 @@ class InferenceClient(private val context: Context) {
     private var bindingRequested: Boolean = false
 
     private val binderCallback = object : IInferenceCallback.Stub() {
-        override fun onStatusChanged(
-            status: String?,
-            loadedEngineType: String?,
-            loadedModelId: String?,
-        ) {
-            val s = status ?: ""
-            val eng = loadedEngineType ?: "NONE"
-            val id = loadedModelId ?: ""
-            _statusState.value = _statusState.value.copy(
-                bound = true,
-                statusText = s,
-                loadedEngineType = eng,
-                loadedModelId = id,
-            )
-            listeners.forEach { it.onStatusChanged(s, eng, id) }
+        override fun onStatusChanged(stateJson: String?) {
+            val state = InferenceStatusState.fromJson(stateJson, bound = true)
+            _statusState.value = state
+            listeners.forEach { it.onStatusChanged(state.statusText) }
         }
 
         override fun onToken(requestId: String?, delta: String?) {
@@ -87,16 +108,10 @@ class InferenceClient(private val context: Context) {
             runCatching {
                 remote.registerCallback(binderCallback)
                 val stateJson = remote.loadedStateJson
-                if (!stateJson.isNullOrBlank()) {
-                    val obj = JSONObject(stateJson)
-                    _statusState.value = InferenceStatusState(
-                        bound = true,
-                        statusText = obj.optString("status", "未加载模型"),
-                        loadedEngineType = obj.optString("engineType", "NONE"),
-                        loadedModelId = obj.optString("modelId", ""),
-                    )
+                _statusState.value = if (!stateJson.isNullOrBlank()) {
+                    InferenceStatusState.fromJson(stateJson, bound = true)
                 } else {
-                    _statusState.value = _statusState.value.copy(bound = true)
+                    _statusState.value.copy(bound = true)
                 }
             }.onFailure {
                 Log.w(TAG, "Failed to register callback on connect", it)
@@ -105,7 +120,7 @@ class InferenceClient(private val context: Context) {
 
         override fun onServiceDisconnected(name: ComponentName?) {
             service = null
-            _statusState.value = _statusState.value.copy(bound = false)
+            _statusState.value = InferenceStatusState(bound = false)
             if (bindingRequested) {
                 bind()
             }
@@ -130,7 +145,7 @@ class InferenceClient(private val context: Context) {
             runCatching { remote.unregisterCallback(binderCallback) }
         }
         runCatching { appContext.unbindService(connection) }
-        _statusState.value = _statusState.value.copy(bound = false)
+        _statusState.value = InferenceStatusState(bound = false)
     }
 
     fun addListener(listener: StreamListener) {
@@ -141,14 +156,23 @@ class InferenceClient(private val context: Context) {
         listeners.remove(listener)
     }
 
-    fun preloadModel(engineType: String, modelId: String) {
+    fun preloadModel(engineType: String, modelId: String, forceGpu: Boolean = false) {
         val intent = Intent(appContext, InferenceService::class.java)
         appContext.startForegroundService(intent)
         if (service == null) bind()
         runCatching {
-            service?.preloadModel(engineType, modelId)
+            service?.preloadModel(engineType, modelId, forceGpu)
         }.onFailure {
             Log.e(TAG, "preloadModel failed", it)
+        }
+    }
+
+    /** Unloads a single engine ("ASR" or "LLM") without touching the other one. */
+    fun unloadEngine(engineType: String) {
+        runCatching {
+            service?.unloadEngine(engineType)
+        }.onFailure {
+            Log.e(TAG, "unloadEngine failed", it)
         }
     }
 
