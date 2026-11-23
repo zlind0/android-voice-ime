@@ -3,6 +3,7 @@ package com.litertime.android.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -11,9 +12,13 @@ import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,12 +26,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
@@ -56,16 +65,25 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -74,7 +92,11 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.litertime.android.BuildConfig
 import com.litertime.android.LiteRtImeApp
 import com.litertime.android.accessibility.ScreenCaptureAccessibilityService
+import com.litertime.android.debug.AiRequestLogEntry
+import com.litertime.android.debug.AiRequestLogStore
+import com.litertime.android.debug.PlaygroundDraft
 import com.litertime.android.inference.InferenceClient
+import com.litertime.android.inference.StreamListener
 import com.litertime.android.settings.LlmProviderType
 import com.litertime.android.storage.DownloadMirror
 import com.litertime.android.storage.DownloadState
@@ -83,16 +105,46 @@ import com.litertime.android.storage.ModelDownloader
 import com.litertime.android.storage.StorageAccess
 import com.litertime.android.storage.StorageMode
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     private lateinit var inferenceClient: InferenceClient
     private lateinit var modelDownloader: ModelDownloader
+    private val playgroundRunState = PlaygroundRunState()
+
+    private val playgroundListener = object : StreamListener {
+        override fun onStatusChanged(status: String, loadedEngineType: String, loadedModelId: String) {
+            playgroundRunState.onStatus(status)
+        }
+
+        override fun onToken(requestId: String, delta: String) {
+            playgroundRunState.onToken(requestId, delta)
+        }
+
+        override fun onComplete(requestId: String) {
+            playgroundRunState.onComplete(requestId)
+        }
+
+        override fun onError(requestId: String, errorMessage: String) {
+            playgroundRunState.onError(requestId, errorMessage)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val app = application as LiteRtImeApp
         inferenceClient = InferenceClient(this)
+        inferenceClient.addListener(playgroundListener)
         inferenceClient.bind()
         modelDownloader = ModelDownloader(app.modelStorage)
 
@@ -102,15 +154,97 @@ class MainActivity : ComponentActivity() {
                     app = app,
                     inferenceClient = inferenceClient,
                     downloader = modelDownloader,
+                    playgroundRunState = playgroundRunState,
                 )
             }
         }
     }
 
     override fun onDestroy() {
+        inferenceClient.removeListener(playgroundListener)
         inferenceClient.unbind()
         super.onDestroy()
     }
+}
+
+/**
+ * Transient Compose state for the most recent playground replay so it survives recomposition and
+ * the vertical scroll position while tokens stream in.
+ */
+private class PlaygroundRunState {
+    var requestId by mutableStateOf<String?>(null)
+        private set
+    var output by mutableStateOf("")
+        private set
+    var statusLine by mutableStateOf("")
+        private set
+    var running by mutableStateOf(false)
+        private set
+    var errorMessage by mutableStateOf<String?>(null)
+        private set
+    var sourceLogId by mutableStateOf<String?>(null)
+        private set
+    var finishedTick by mutableIntStateOf(0)
+        private set
+
+    fun start(id: String, sourceLogId: String) {
+        requestId = id
+        this.sourceLogId = sourceLogId
+        output = ""
+        statusLine = "正在排队…"
+        running = true
+        errorMessage = null
+    }
+
+    fun fail(message: String) {
+        running = false
+        statusLine = ""
+        errorMessage = message
+    }
+
+    fun onStatus(status: String) {
+        if (running && status.isNotBlank()) {
+            statusLine = status
+        }
+    }
+
+    fun onToken(id: String, delta: String) {
+        if (id == requestId) {
+            output += delta
+            statusLine = ""
+        }
+    }
+
+    fun onComplete(id: String) {
+        if (id == requestId) {
+            running = false
+            statusLine = "完成"
+            finishedTick++
+        }
+    }
+
+    fun onError(id: String, message: String) {
+        if (id == requestId) {
+            running = false
+            statusLine = "失败"
+            errorMessage = message
+            finishedTick++
+        }
+    }
+}
+
+/**
+ * Two-level settings navigation: [HOME] lists the sections with a compact status preview and each
+ * detail page shows the full controls.
+ */
+private enum class SettingsPage(val title: String) {
+    HOME("LiteRT 语音输入法设置"),
+    PERMISSIONS("输入法与系统权限"),
+    STORAGE("模型共享存储"),
+    SERVICE("独立推理引擎状态"),
+    MODELS("模型下载与选择"),
+    ONLINE("在线大模型接口"),
+    DEBUG("AI 请求调试与回放"),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -119,16 +253,32 @@ private fun LiteRtImeSettingsScreen(
     app: LiteRtImeApp,
     inferenceClient: InferenceClient,
     downloader: ModelDownloader,
+    playgroundRunState: PlaygroundRunState,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val storage = app.modelStorage
     val settingsStore = app.settingsStore
+    val logStore = remember { AiRequestLogStore(app.filesDir, app.cacheDir) }
+    val debugScope = rememberCoroutineScope()
+
+    var currentPage by rememberSaveable { mutableStateOf(SettingsPage.HOME) }
+
+    BackHandler(enabled = currentPage != SettingsPage.HOME) {
+        currentPage = SettingsPage.HOME
+    }
 
     var refreshTick by remember { mutableIntStateOf(0) }
     var settings by remember(refreshTick) { mutableStateOf(settingsStore.getSettings()) }
     var storageConfig by remember(refreshTick) { mutableStateOf(storage.getConfig()) }
     var storageError by remember { mutableStateOf<String?>(null) }
+
+    var logEntries by remember { mutableStateOf<List<AiRequestLogEntry>>(emptyList()) }
+    var selectedLogId by rememberSaveable { mutableStateOf<String?>(null) }
+    var draftSystemPrompt by rememberSaveable { mutableStateOf("") }
+    var draftUserPrompt by rememberSaveable { mutableStateOf("") }
+    var draftModelId by rememberSaveable { mutableStateOf("") }
+    var loadedDraftId by remember { mutableStateOf<String?>(null) }
 
     val inferenceState by inferenceClient.statusState.collectAsState()
     val downloadStates by downloader.states.collectAsState()
@@ -174,6 +324,45 @@ private fun LiteRtImeSettingsScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+
+    LaunchedEffect(refreshTick) {
+        logEntries = withContext(Dispatchers.IO) { logStore.listEntries() }
+    }
+
+    LaunchedEffect(playgroundRunState.finishedTick) {
+        if (playgroundRunState.finishedTick > 0) {
+            refreshTick++
+        }
+    }
+
+    LaunchedEffect(selectedLogId, logEntries) {
+        val id = selectedLogId ?: return@LaunchedEffect
+        val entry = logEntries.firstOrNull { it.id == id } ?: return@LaunchedEffect
+        if (loadedDraftId != id) {
+            val draft = withContext(Dispatchers.IO) { logStore.loadDraft(entry) }
+            draftSystemPrompt = draft.systemPrompt
+            draftUserPrompt = draft.userPrompt
+            draftModelId = draft.modelId
+            loadedDraftId = id
+        }
+        snapshotFlow { Triple(draftSystemPrompt, draftUserPrompt, draftModelId) }
+            .drop(1)
+            .collectLatest { (systemPrompt, userPrompt, modelId) ->
+                delay(350)
+                withContext(Dispatchers.IO) {
+                    logStore.saveDraft(
+                        id,
+                        PlaygroundDraft(
+                            systemPrompt = systemPrompt,
+                            userPrompt = userPrompt,
+                            modelId = modelId,
+                        ),
+                    )
+                }
+            }
+    }
+
+    val selectedLogEntry = logEntries.firstOrNull { it.id == selectedLogId }
 
     val micLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -225,10 +414,85 @@ private fun LiteRtImeSettingsScreen(
         }
     }
 
+    val permissionPreview = buildString {
+        append(
+            when {
+                imeSelected -> "输入法已切换"
+                imeEnabled -> "已启用，未设为默认"
+                else -> "输入法未启用"
+            },
+        )
+        append(" · ")
+        append(if (hasMicPermission) "麦克风已授权" else "麦克风未授权")
+        append(" · ")
+        append(
+            when {
+                a11yConnected -> "截屏服务已连接"
+                a11yEnabled -> "截屏服务已启用"
+                else -> "截屏服务未开启"
+            },
+        )
+    }
+
+    val storagePreview = if (storageConfig.mode == StorageMode.APP) {
+        "应用私有存储"
+    } else {
+        "共享目录：" + storageConfig.label.ifBlank { storageConfig.path }
+    }
+
+    val servicePreview = if (!inferenceState.bound) {
+        "未连接 :inference 服务"
+    } else {
+        buildString {
+            append(inferenceState.statusText)
+            if (inferenceState.loadedModelId.isNotBlank()) {
+                append(" · ")
+                append(
+                    when (inferenceState.loadedEngineType) {
+                        "ASR" -> ModelCatalog.findAsr(inferenceState.loadedModelId)?.displayName
+                        else -> ModelCatalog.findLlm(inferenceState.loadedModelId)?.displayName
+                    } ?: inferenceState.loadedModelId,
+                )
+            }
+        }
+    }
+
+    val modelsPreview = buildString {
+        append("ASR: ")
+        append(ModelCatalog.findAsr(settings.activeAsrModelId)?.displayName ?: settings.activeAsrModelId)
+        append(" · LLM: ")
+        append(ModelCatalog.findLlm(settings.activeLlmModelId)?.displayName ?: settings.activeLlmModelId)
+    }
+
+    val onlinePreview = buildString {
+        append(settings.llmProvider.displayName)
+        if (settings.llmProvider != LlmProviderType.LOCAL_LITERT) {
+            append(" · ")
+            append(settings.onlineModelName)
+        }
+    }
+
+    val debugPreview = buildString {
+        append(if (settings.debugRequestLoggingEnabled) "记录已开启" else "记录已关闭")
+        append(" · ")
+        append(logEntries.size)
+        append(" 条记录")
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("LiteRT 语音输入法设置") },
+                title = { Text(currentPage.title) },
+                navigationIcon = {
+                    if (currentPage != SettingsPage.HOME) {
+                        IconButton(onClick = { currentPage = SettingsPage.HOME }) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = "返回",
+                            )
+                        }
+                    }
+                },
             )
         },
     ) { padding ->
@@ -240,7 +504,47 @@ private fun LiteRtImeSettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            if (currentPage == SettingsPage.HOME) {
+                SettingsHomeItem(
+                    icon = { Icon(Icons.Rounded.Keyboard, contentDescription = null) },
+                    title = "输入法与系统权限",
+                    preview = permissionPreview,
+                    onClick = { currentPage = SettingsPage.PERMISSIONS },
+                )
+                SettingsHomeItem(
+                    icon = { Icon(Icons.Rounded.FolderOpen, contentDescription = null) },
+                    title = "模型共享存储",
+                    preview = storagePreview,
+                    onClick = { currentPage = SettingsPage.STORAGE },
+                )
+                SettingsHomeItem(
+                    icon = { Icon(Icons.Rounded.Memory, contentDescription = null) },
+                    title = "独立推理引擎状态",
+                    preview = servicePreview,
+                    onClick = { currentPage = SettingsPage.SERVICE },
+                )
+                SettingsHomeItem(
+                    icon = { Icon(Icons.Rounded.Download, contentDescription = null) },
+                    title = "模型下载与选择",
+                    preview = modelsPreview,
+                    onClick = { currentPage = SettingsPage.MODELS },
+                )
+                SettingsHomeItem(
+                    icon = { Icon(Icons.Rounded.Cloud, contentDescription = null) },
+                    title = "在线大模型接口",
+                    preview = onlinePreview,
+                    onClick = { currentPage = SettingsPage.ONLINE },
+                )
+                SettingsHomeItem(
+                    icon = { Icon(Icons.Rounded.BugReport, contentDescription = null) },
+                    title = "AI 请求调试与回放",
+                    preview = debugPreview,
+                    onClick = { currentPage = SettingsPage.DEBUG },
+                )
+            }
+
             // 1. Setup & Permissions
+            if (currentPage == SettingsPage.PERMISSIONS) {
             SectionCard(title = "1. 输入法与系统权限") {
                 PermissionRow(
                     icon = { Icon(Icons.Rounded.Keyboard, contentDescription = null) },
@@ -299,8 +603,10 @@ private fun LiteRtImeSettingsScreen(
                     },
                 )
             }
+            }
 
             // 2. Shared Model Storage (model-storage.md)
+            if (currentPage == SettingsPage.STORAGE) {
             SectionCard(title = "2. 模型共享存储 (model-storage.md)") {
                 Text(
                     text = "可与同目录规范的应用（如 nostalgiaPod）共用 llm-models/ 与 asr-models/ 权重，避免重复下载 2–4 GB。",
@@ -395,8 +701,10 @@ private fun LiteRtImeSettingsScreen(
                     }
                 }
             }
+            }
 
             // 3. Resident Inference Service Status
+            if (currentPage == SettingsPage.SERVICE) {
             SectionCard(title = "3. 独立推理引擎状态 (:inference)") {
                 Text(
                     text = "状态：${inferenceState.statusText}",
@@ -429,8 +737,10 @@ private fun LiteRtImeSettingsScreen(
                     }
                 }
             }
+            }
 
             // 4. Mirror & Model Management
+            if (currentPage == SettingsPage.MODELS) {
             SectionCard(title = "4. 模型下载与选择") {
                 Text("下载源", style = MaterialTheme.typography.labelLarge)
                 Row(
@@ -554,8 +864,10 @@ private fun LiteRtImeSettingsScreen(
                     )
                 }
             }
+            }
 
             // 5. Reserved Online LLM Settings
+            if (currentPage == SettingsPage.ONLINE) {
             SectionCard(title = "5. 在线大模型接口预留 (TextGenerationBackend)") {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -612,10 +924,429 @@ private fun LiteRtImeSettingsScreen(
                     )
                 }
             }
+            }
+
+            // 6. AI request logging & replay playground
+            if (currentPage == SettingsPage.DEBUG) {
+            SectionCard(title = "6. AI 请求调试与回放") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("记录每一次 AI 请求", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "开启后保存语音、截图（如有）、系统/用户 Prompt 与实际使用的模型",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = settings.debugRequestLoggingEnabled,
+                        onCheckedChange = { checked ->
+                            settings = settingsStore.update {
+                                it.copy(debugRequestLoggingEnabled = checked)
+                            }
+                        },
+                    )
+                }
+                Text(
+                    text = "日志目录：${logStore.rootDir().absolutePath}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("共 ${logEntries.size} 条记录", style = MaterialTheme.typography.labelLarge)
+                    TextButton(onClick = { refreshTick++ }) {
+                        Text("刷新列表")
+                    }
+                }
+                if (selectedLogEntry != null) {
+                    HorizontalDivider()
+                    Text(
+                        text = "回放 ${formatLogTime(selectedLogEntry.timestamp)} · " +
+                            "${selectedLogEntry.backendType} · ${selectedLogEntry.mode}",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        text = "原始模型：${selectedLogEntry.modelDisplayName} " +
+                            "(${selectedLogEntry.modelId}) · 状态：${logStatusLabel(selectedLogEntry.status)} · " +
+                            "来源：${if (selectedLogEntry.origin == "playground") "回放" else "输入法"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (selectedLogEntry.replayOf.isNotBlank()) {
+                        Text(
+                            text = "回放自：${selectedLogEntry.replayOf}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        text = "原始输出：${selectedLogEntry.output.ifBlank { "(空)" }}",
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 8,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (selectedLogEntry.errorMessage.isNotBlank()) {
+                        Text(
+                            text = "原始错误：${selectedLogEntry.errorMessage}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    Text(
+                        text = "输入素材：语音 ${if (selectedLogEntry.hasAudio) "✓" else "✗"} · " +
+                            "截图 ${if (selectedLogEntry.hasScreenshot) "✓" else "✗"}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+
+                    if (selectedLogEntry.hasScreenshot) {
+                        val screenshot by produceState<ImageBitmap?>(
+                            initialValue = null,
+                            key1 = selectedLogEntry.id,
+                        ) {
+                            value = withContext(Dispatchers.IO) {
+                                val file = File(
+                                    selectedLogEntry.dir,
+                                    selectedLogEntry.screenshotFileName,
+                                )
+                                runCatching {
+                                    BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
+                                }.getOrNull()
+                            }
+                        }
+                        Text("输入截图（模型实际收到的画面）", style = MaterialTheme.typography.labelLarge)
+                        val bitmap = screenshot
+                        if (bitmap != null) {
+                            Image(
+                                bitmap = bitmap,
+                                contentDescription = "输入截图",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 360.dp),
+                                contentScale = ContentScale.Fit,
+                            )
+                        } else {
+                            Text(
+                                text = "截图加载中…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
+                    if (selectedLogEntry.backendType == "ASR") {
+                        Text(
+                            text = "Whisper / ASR 由模型内部解码，不使用系统/用户 Prompt；回放时仅可切换 ASR 模型。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        OutlinedTextField(
+                            value = draftSystemPrompt,
+                            onValueChange = { draftSystemPrompt = it },
+                            label = { Text("系统 Prompt") },
+                            minLines = 2,
+                            maxLines = 6,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = draftUserPrompt,
+                            onValueChange = { draftUserPrompt = it },
+                            label = { Text("用户 Prompt") },
+                            minLines = 3,
+                            maxLines = 10,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+
+                    Text("回放模型", style = MaterialTheme.typography.labelLarge)
+                    val candidateModels = if (selectedLogEntry.backendType == "ASR") {
+                        ModelCatalog.asrModels.map { it.id to it.displayName }
+                    } else {
+                        ModelCatalog.llmModels.map { it.id to it.displayName }
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        candidateModels.forEach { (modelId, displayName) ->
+                            val installed = if (selectedLogEntry.backendType == "ASR") {
+                                ModelCatalog.findAsr(modelId)?.let { storage.isAsrInstalled(it) } ?: false
+                            } else {
+                                ModelCatalog.findLlm(modelId)?.let { storage.isLlmInstalled(it) } ?: false
+                            }
+                            FilterChip(
+                                selected = draftModelId == modelId,
+                                onClick = { draftModelId = modelId },
+                                label = {
+                                    Text(if (installed) displayName else "$displayName (未安装)")
+                                },
+                            )
+                        }
+                    }
+                    if (selectedLogEntry.backendType == "ONLINE_LLM") {
+                        Text(
+                            text = "在线大模型通道目前为预留实现，回放只会返回占位错误。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            draftSystemPrompt = selectedLogEntry.systemPrompt
+                            draftUserPrompt = selectedLogEntry.userPrompt
+                            draftModelId = selectedLogEntry.modelId
+                        },
+                    ) {
+                        Text("恢复原始 Prompt 与模型")
+                    }
+
+                    val replayVisible = playgroundRunState.sourceLogId == selectedLogEntry.id
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Button(
+                            onClick = {
+                                debugScope.launch {
+                                    val prepared = withContext(Dispatchers.IO) {
+                                        logStore.prepareReplay(selectedLogEntry)
+                                    }
+                                    if (prepared == null) {
+                                        Toast.makeText(
+                                            context,
+                                            "原始音频缺失，无法回放",
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                        return@launch
+                                    }
+                                    val requestId = UUID.randomUUID().toString()
+                                    playgroundRunState.start(requestId, selectedLogEntry.id)
+                                    val extraJson = JSONObject().apply {
+                                        put("language", selectedLogEntry.languageHint)
+                                        if (selectedLogEntry.backendType != "ASR") {
+                                            put("systemPrompt", draftSystemPrompt)
+                                            put("userPrompt", draftUserPrompt)
+                                        }
+                                        put("origin", "playground")
+                                        put("replayOf", selectedLogEntry.id)
+                                    }.toString()
+                                    val dispatched = inferenceClient.runRequest(
+                                        requestId = requestId,
+                                        backendType = selectedLogEntry.backendType,
+                                        mode = selectedLogEntry.mode,
+                                        modelId = draftModelId,
+                                        audioWavFile = prepared.audioFile,
+                                        screenshotFile = prepared.screenshotFile,
+                                        extraJson = extraJson,
+                                    )
+                                    if (!dispatched) {
+                                        playgroundRunState.fail("推理服务正在连接，请稍后重试")
+                                    }
+                                }
+                            },
+                            enabled = !playgroundRunState.running && selectedLogEntry.hasAudio,
+                        ) {
+                            Text(
+                                if (playgroundRunState.running && replayVisible) {
+                                    "推理中…"
+                                } else {
+                                    "用当前设置重新请求"
+                                },
+                            )
+                        }
+                        if (playgroundRunState.running && replayVisible) {
+                            OutlinedButton(
+                                onClick = {
+                                    playgroundRunState.requestId?.let {
+                                        inferenceClient.cancelRequest(it)
+                                    }
+                                },
+                            ) {
+                                Text("取消")
+                            }
+                        }
+                    }
+
+                    if (replayVisible &&
+                        (playgroundRunState.running ||
+                            playgroundRunState.output.isNotBlank() ||
+                            playgroundRunState.errorMessage != null)
+                    ) {
+                        Text("回放输出", style = MaterialTheme.typography.labelLarge)
+                        if (playgroundRunState.statusLine.isNotBlank()) {
+                            Text(
+                                text = playgroundRunState.statusLine,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text(
+                            text = playgroundRunState.output.ifBlank {
+                                if (playgroundRunState.running) "(等待输出…)" else "(空)"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        playgroundRunState.errorMessage?.let { message ->
+                            Text(
+                                text = "回放错误：$message",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider()
+                if (logEntries.isEmpty()) {
+                    Text(
+                        text = "暂无记录。开启开关后，下一次语音请求会被保存到这里。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text("选择一条记录进行回放", style = MaterialTheme.typography.labelLarge)
+                    logEntries.take(40).forEach { entry ->
+                        LogEntryRow(
+                            entry = entry,
+                            selected = entry.id == selectedLogId,
+                            onClick = { selectedLogId = entry.id },
+                        )
+                    }
+                    if (logEntries.size > 40) {
+                        Text(
+                            text = "仅显示最近 40 条，完整原始数据见日志目录。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            }
 
             Spacer(Modifier.height(24.dp))
         }
     }
+}
+
+@Composable
+private fun SettingsHomeItem(
+    icon: @Composable () -> Unit,
+    title: String,
+    preview: String,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            icon()
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = preview,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                imageVector = Icons.Rounded.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LogEntryRow(
+    entry: AiRequestLogEntry,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.secondaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerLowest
+            },
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(formatLogTime(entry.timestamp), style = MaterialTheme.typography.labelMedium)
+                Text(
+                    text = if (entry.origin == "playground") "回放" else "输入法",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                text = "${entry.modelDisplayName} · ${entry.mode} · ${logStatusLabel(entry.status)}",
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                text = entry.output.ifBlank { "(无输出)" },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private fun formatLogTime(timestamp: Long): String =
+    SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
+
+private fun logStatusLabel(status: String): String = when (status) {
+    "completed" -> "已完成"
+    "error" -> "失败"
+    "cancelled" -> "已取消"
+    "pending" -> "未完成"
+    else -> status.ifBlank { "未知" }
 }
 
 @Composable

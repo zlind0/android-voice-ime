@@ -151,7 +151,11 @@ class LiteRtGemmaBackend(
             withContext(Dispatchers.IO) {
                 currentEngine.createConversation(
                     ConversationConfig(
-                        systemInstruction = Contents.of(Content.Text(PromptTemplates.SYSTEM_PROMPT_VOICE_IME)),
+                        systemInstruction = Contents.of(
+                            Content.Text(
+                                PromptTemplates.resolveSystemPrompt(request.systemPrompt),
+                            ),
+                        ),
                         samplerConfig = SamplerConfig(
                             topK = 40,
                             topP = 0.95,
@@ -198,7 +202,7 @@ class LiteRtGemmaBackend(
 
                 val wavBytes = request.audioWavFile.readBytes()
                 list.add(Content.AudioBytes(wavBytes))
-                list.add(Content.Text(PromptTemplates.userPromptFor(request.mode)))
+                list.add(Content.Text(PromptTemplates.resolveUserPrompt(request.mode, request.userPrompt)))
                 Contents.of(list)
             }
 

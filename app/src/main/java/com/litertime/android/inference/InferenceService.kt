@@ -14,11 +14,14 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.litertime.android.R
+import com.litertime.android.debug.AiRequestLogStore
+import com.litertime.android.debug.RequestLogRecorder
 import com.litertime.android.ipc.IInferenceCallback
 import com.litertime.android.ipc.IInferenceService
 import com.litertime.android.pipeline.GenerationEvent
 import com.litertime.android.pipeline.LiteRtGemmaBackend
 import com.litertime.android.pipeline.OnlineLlmBackend
+import com.litertime.android.pipeline.PromptTemplates
 import com.litertime.android.pipeline.SherpaAsrBackend
 import com.litertime.android.pipeline.TextGenerationBackend
 import com.litertime.android.pipeline.VoiceGenerationRequest
@@ -29,6 +32,7 @@ import com.litertime.android.storage.ModelStorage
 import com.litertime.android.ui.MainActivity
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -60,6 +64,7 @@ class InferenceService : Service() {
     private lateinit var asrBackend: SherpaAsrBackend
     private lateinit var gemmaBackend: LiteRtGemmaBackend
     private lateinit var onlineBackend: OnlineLlmBackend
+    private lateinit var requestLogStore: AiRequestLogStore
 
     @Volatile
     private var loadedEngineType: String = "NONE"
@@ -124,11 +129,57 @@ class InferenceService : Service() {
             val id = modelId ?: ""
             val audioFile = File(audioFilePath ?: "")
             val imageFile = imageFilePath?.takeIf { it.isNotBlank() }?.let { File(it) }
-            val languageHint = runCatching {
-                JSONObject(extraJson ?: "{}").optString("language", "")
-            }.getOrDefault("")
+            val extra = runCatching { JSONObject(extraJson ?: "{}") }.getOrDefault(JSONObject())
+            val languageHint = extra.optString("language", "")
+            val systemPromptOverride = if (extra.has("systemPrompt")) {
+                extra.optString("systemPrompt", "")
+            } else {
+                null
+            }
+            val userPromptOverride = if (extra.has("userPrompt")) {
+                extra.optString("userPrompt", "")
+            } else {
+                null
+            }
+            val origin = extra.optString("origin", "ime")
+            val replayOf = extra.optString("replayOf", "")
 
+            val settings = settingsStore.getSettings()
+            val resolvedSystemPrompt = if (type == "ASR") {
+                ""
+            } else {
+                PromptTemplates.resolveSystemPrompt(systemPromptOverride)
+            }
+            val resolvedUserPrompt = if (type == "ASR") {
+                ""
+            } else {
+                PromptTemplates.resolveUserPrompt(voiceMode, userPromptOverride)
+            }
+            val modelDisplayName = when (type) {
+                "ASR" -> ModelCatalog.findAsr(id)?.displayName ?: id
+                "LLM" -> ModelCatalog.findLlm(id)?.displayName ?: id
+                else -> settings.onlineModelName.ifBlank { id }
+            }
             val job = serviceScope.launch {
+                // Copying WAV/screenshot can be a few MB, so keep it off the binder thread.
+                val recorder: RequestLogRecorder? = if (settings.debugRequestLoggingEnabled) {
+                    requestLogStore.recordRequest(
+                        requestId = reqId,
+                        backendType = type,
+                        mode = voiceMode.name,
+                        modelId = id,
+                        modelDisplayName = modelDisplayName,
+                        systemPrompt = resolvedSystemPrompt,
+                        userPrompt = resolvedUserPrompt,
+                        languageHint = languageHint,
+                        origin = origin,
+                        replayOf = replayOf,
+                        audioFile = audioFile,
+                        screenshotFile = imageFile,
+                    )
+                } else {
+                    null
+                }
                 try {
                     if (type == "ONLINE_LLM") {
                         runStreamingBackend(
@@ -140,7 +191,10 @@ class InferenceService : Service() {
                                 audioWavFile = audioFile,
                                 screenshotFile = imageFile,
                                 languageHint = languageHint,
+                                systemPrompt = systemPromptOverride,
+                                userPrompt = userPromptOverride,
                             ),
+                            recorder = recorder,
                         )
                         return@launch
                     }
@@ -148,6 +202,7 @@ class InferenceService : Service() {
                     val loaded = ensureExclusiveBackendLoaded(type, id)
                     if (!loaded) {
                         broadcastError(reqId, currentStatusText)
+                        recorder?.finish("", "error", currentStatusText)
                         return@launch
                     }
 
@@ -161,10 +216,14 @@ class InferenceService : Service() {
                             audioWavFile = audioFile,
                             screenshotFile = imageFile,
                             languageHint = languageHint,
+                            systemPrompt = systemPromptOverride,
+                            userPrompt = userPromptOverride,
                         ),
+                        recorder = recorder,
                     )
                 } finally {
                     activeRequestJobs.remove(reqId)
+                    recorder?.finish("", "cancelled", "")
                     runCatching { if (audioFile.exists()) audioFile.delete() }
                     runCatching { if (imageFile != null && imageFile.exists()) imageFile.delete() }
                 }
@@ -185,6 +244,7 @@ class InferenceService : Service() {
         super.onCreate()
         modelStorage = ModelStorage(this)
         settingsStore = ImeSettingsStore(this)
+        requestLogStore = AiRequestLogStore(filesDir, cacheDir)
         asrBackend = SherpaAsrBackend(modelStorage, settingsStore)
         gemmaBackend = LiteRtGemmaBackend(this, modelStorage, settingsStore)
         onlineBackend = OnlineLlmBackend(settingsStore)
@@ -271,14 +331,39 @@ class InferenceService : Service() {
     private suspend fun runStreamingBackend(
         backend: TextGenerationBackend,
         request: VoiceGenerationRequest,
+        recorder: RequestLogRecorder? = null,
     ) {
-        backend.generateStream(request).collect { event ->
-            when (event) {
-                is GenerationEvent.Status -> updateStatusOnly(event.message)
-                is GenerationEvent.Token -> broadcastToken(request.requestId, event.delta)
-                is GenerationEvent.Completed -> broadcastComplete(request.requestId)
-                is GenerationEvent.Error -> broadcastError(request.requestId, event.message)
+        val output = StringBuilder()
+        var status = "cancelled"
+        var errorMessage = ""
+        try {
+            backend.generateStream(request).collect { event ->
+                when (event) {
+                    is GenerationEvent.Status -> updateStatusOnly(event.message)
+                    is GenerationEvent.Token -> {
+                        output.append(event.delta)
+                        broadcastToken(request.requestId, event.delta)
+                    }
+                    is GenerationEvent.Completed -> {
+                        status = "completed"
+                        broadcastComplete(request.requestId)
+                    }
+                    is GenerationEvent.Error -> {
+                        status = "error"
+                        errorMessage = event.message
+                        broadcastError(request.requestId, errorMessage)
+                    }
+                }
             }
+        } catch (t: CancellationException) {
+            status = "cancelled"
+            throw t
+        } catch (t: Throwable) {
+            status = "error"
+            errorMessage = t.message ?: "推理异常"
+            broadcastError(request.requestId, errorMessage)
+        } finally {
+            recorder?.finish(output.toString(), status, errorMessage)
         }
     }
 

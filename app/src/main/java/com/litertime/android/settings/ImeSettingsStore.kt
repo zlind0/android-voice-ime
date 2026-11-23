@@ -28,6 +28,8 @@ data class ImeSettings(
     val onlineBaseUrl: String = "https://api.openai.com/v1",
     val onlineApiKey: String = "",
     val onlineModelName: String = "gpt-4o-mini",
+    /** When enabled, every AI request is persisted under `files/ai-request-logs/`. */
+    val debugRequestLoggingEnabled: Boolean = false,
 )
 
 /**
@@ -70,6 +72,7 @@ class ImeSettingsStore(private val appFilesDir: File) {
             onlineBaseUrl = props.getProperty("onlineBaseUrl", "https://api.openai.com/v1"),
             onlineApiKey = props.getProperty("onlineApiKey", ""),
             onlineModelName = props.getProperty("onlineModelName", "gpt-4o-mini"),
+            debugRequestLoggingEnabled = props.getProperty("debugRequestLoggingEnabled", "false").toBoolean(),
         )
         cachedMtime = mtime
         cachedSettings = loaded
@@ -96,6 +99,7 @@ class ImeSettingsStore(private val appFilesDir: File) {
             setProperty("onlineBaseUrl", settings.onlineBaseUrl)
             setProperty("onlineApiKey", settings.onlineApiKey)
             setProperty("onlineModelName", settings.onlineModelName)
+            setProperty("debugRequestLoggingEnabled", settings.debugRequestLoggingEnabled.toString())
         }
         val tmp = File(appFilesDir, "ime-settings.properties.tmp")
         FileOutputStream(tmp).use { props.store(it, "LiteRT IME settings") }

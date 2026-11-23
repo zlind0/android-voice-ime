@@ -17,6 +17,10 @@ data class VoiceGenerationRequest(
     val audioWavFile: File,
     val screenshotFile: File? = null,
     val languageHint: String = "",
+    /** Optional override for the system prompt, used by the debug playground. */
+    val systemPrompt: String? = null,
+    /** Optional override for the mode's user prompt, used by the debug playground. */
+    val userPrompt: String? = null,
 )
 
 sealed interface GenerationEvent {
