@@ -1,0 +1,87 @@
+package com.litertime.android.ime
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class RadialMenuGeometryTest {
+    private val anchorX = 500f
+    private val anchorY = 400f
+    private val radius = 200f
+
+    @Test
+    fun whisperCenterTranscribesAndEdgeCancels() {
+        val center = RadialMenuGeometry.evaluate(
+            anchorX = anchorX,
+            anchorY = anchorY,
+            pointerX = anchorX,
+            pointerY = anchorY - 40f,
+            radius = radius,
+            source = MicSource.WHISPER,
+        )
+        assertEquals(RadialAction.WHISPER_TRANSCRIBE, center.action)
+
+        for (angle in listOf(15f, 90f, 165f)) {
+            val (px, py) = RadialMenuGeometry.pointOnArc(anchorX, anchorY, 170f, angle)
+            val edge = RadialMenuGeometry.evaluate(
+                anchorX = anchorX,
+                anchorY = anchorY,
+                pointerX = px,
+                pointerY = py,
+                radius = radius,
+                source = MicSource.WHISPER,
+            )
+            assertEquals("Angle $angle should cancel Whisper", RadialAction.CANCEL, edge.action)
+        }
+    }
+
+    @Test
+    fun gemmaCenterDefaultsToNormalPolishAndEdgesMapAllFourSectors() {
+        val center = RadialMenuGeometry.evaluate(
+            anchorX = anchorX,
+            anchorY = anchorY,
+            pointerX = anchorX + 10f,
+            pointerY = anchorY - 50f,
+            radius = radius,
+            source = MicSource.GEMMA,
+        )
+        assertEquals(RadialAction.GEMMA_POLISH_NORMAL, center.action)
+
+        val cases = listOf(
+            160f to RadialAction.CANCEL,
+            115f to RadialAction.GEMMA_POLISH_NORMAL,
+            65f to RadialAction.GEMMA_POLISH_FORMAL,
+            20f to RadialAction.GEMMA_SCREENSHOT_INSTRUCTION,
+        )
+        for ((angle, expected) in cases) {
+            val (px, py) = RadialMenuGeometry.pointOnArc(anchorX, anchorY, 170f, angle)
+            val eval = RadialMenuGeometry.evaluate(
+                anchorX = anchorX,
+                anchorY = anchorY,
+                pointerX = px,
+                pointerY = py,
+                radius = radius,
+                source = MicSource.GEMMA,
+            )
+            assertEquals("Angle $angle mismatch", expected, eval.action)
+        }
+    }
+
+    @Test
+    fun knobIsClampedWithinSemicircleRadius() {
+        val (px, py) = RadialMenuGeometry.pointOnArc(anchorX, anchorY, 500f, 45f)
+        val eval = RadialMenuGeometry.evaluate(
+            anchorX = anchorX,
+            anchorY = anchorY,
+            pointerX = px,
+            pointerY = py,
+            radius = radius,
+            source = MicSource.GEMMA,
+        )
+        val dx = eval.knobX - anchorX
+        val dy = anchorY - eval.knobY
+        val dist = kotlin.math.hypot(dx, dy)
+        assertTrue(dist <= radius + 0.1f)
+        assertEquals(1f, eval.distanceRatio, 0.01f)
+    }
+}

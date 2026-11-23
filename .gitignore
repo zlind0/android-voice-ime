@@ -1,0 +1,64 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Kotlin
+.kotlin/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Local machine config (SDK path, signing, etc.)
+local.properties
+*.keystore
+*.jks
+keystore.properties
+
+# Build outputs
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+*.hprof
+lint-results*.html
+lint-results*.xml
+release/
+
+# Native / CMake
+obj/
+*.so
+!app/src/main/jniLibs/**/*.so
+
+# Logs and dumps
+*.log
+*.hprof
+*.stackdump
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*~
+*.swp
+.vscode/
+
+# Local prebuilt libraries fetched by the build script (app/build.gradle.kts)
+app/libs/*.aar
+app/libs/*.aar.part
+
+# Scratch space for agent/temporary work
+tmp/
+
+# Downloaded model weights (fetched at runtime, not versioned)
+models/
+*.litertlm
+*.tflite
+*.onnx
+*.gguf
