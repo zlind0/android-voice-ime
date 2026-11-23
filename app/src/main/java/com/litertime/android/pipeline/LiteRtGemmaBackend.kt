@@ -195,7 +195,7 @@ class LiteRtGemmaBackend(
                         try {
                             val scaled = ImageEncoder.downscaleBitmap(bitmap, maxEdge = 896)
                             try {
-                                list.add(Content.Text("[Screen Context]:"))
+                                list.add(Content.Text("[屏幕内容]:"))
                                 list.add(Content.ImageBytes(ImageEncoder.encodeTga(scaled)))
                             } finally {
                                 if (scaled !== bitmap) scaled.recycle()
@@ -207,7 +207,7 @@ class LiteRtGemmaBackend(
                 }
 
                 // 3) Audio always last: label + audio.
-                list.add(Content.Text("\n[Audio Instruction]:"))
+                list.add(Content.Text("\n[语音]:"))
                 list.add(Content.AudioBytes(request.audioWavFile.readBytes()))
 
                 Contents.of(list)

@@ -2,7 +2,7 @@ package com.litertime.android.pipeline
 
 object PromptTemplates {
     val SYSTEM_PROMPT_VOICE_IME: String = """
-你是一个输入法语音助手。根据用户的指令，输出最终可直接上屏的文本内容，不要添加任何前缀、解释、引号或 Markdown 包裹。如果用户没有要求，陈述句最后不要添加句号。
+你是一个输入法语音助手。根据用户的指令，输出最终可直接上屏的文本内容，不要添加任何前缀、解释、引号或 Markdown 包裹。如果用户没有要求，陈述句最后不要添加句号。如果无法确定语音的语言，请输出简体中文。
 """.trimIndent()
 
     /**

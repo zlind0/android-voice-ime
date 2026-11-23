@@ -5,10 +5,14 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
+import android.os.Debug
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.HapticFeedbackConstants
@@ -21,13 +25,17 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * Transparent-top IME overlay view containing:
- * - Bottom 1/3 voice input bar: [Switch Keyboard] [Whisper Mic] [Gemma 4 Mic] [Backspace]
- * - Expandable radial semicircle disc above the pressed mic button with draggable circular knob
+ * Bottom-anchored IME view containing:
+ * - A full-width rectangular panel that reaches the bottom of the screen:
+ *   [Switch Keyboard] [Whisper Mic] [Gemma 4 Mic] [Backspace]
+ * - A status hint row directly below the two mic buttons, and a live memory readout
+ *   in the bottom strip that stays clear of the system safe area.
+ * - An expandable radial semicircle disc above the panel with a draggable circular knob.
  *
- * The upper area remains fully transparent so the host app shows through; `LiteRtImeService`
- * adjusts `onComputeInsets().touchableRegion` dynamically via [isRadialExpanded],
- * [getIdleTouchableTop], and [getIdleTouchableBottom], while respecting system bottom safe insets.
+ * Only the strip above the panel stays transparent so the host app shows through.
+ * `LiteRtImeService` adjusts `onComputeInsets().touchableRegion` dynamically via
+ * [isRadialExpanded], [getIdleTouchableTop], and [getIdleTouchableBottom], while respecting
+ * system bottom safe insets.
  */
 class VoiceImeOverlayView @JvmOverloads constructor(
     context: Context,
@@ -38,6 +46,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         fun onSwitchKeyboardClick()
         fun onSwitchKeyboardLongClick()
         fun onBackspaceClick()
+        fun onEnterClick()
         fun onStartRecording(source: MicSource): Boolean
         fun onFinishRecording(source: MicSource, action: RadialAction)
         fun onCancelActiveGeneration()
@@ -54,15 +63,21 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     private fun sp(value: Float): Float =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, value, resources.displayMetrics)
 
-    private val barHeightPx = dp(80f)
-    private val statusStripHeightPx = dp(32f)
-    private val baseWindowHeightPx = dp(268f).toInt()
-    private val minBottomMarginPx = dp(12f).toInt()
+    // Layout: one full-width rectangular panel anchored to the bottom of the screen.
+    // The transparent strip above the panel hosts the radial gesture disc.
+    private val radialTopSpacePx = dp(140f).toInt()
+    private val panelTopPaddingPx = dp(12f)
+    private val micButtonHeightPx = dp(104f) // 2× the previous 52dp
+    private val belowMicRegionPx = dp(39f) // 1.5× the previous ~26dp below the mic row
+    private val baseWindowHeightPx =
+        (radialTopSpacePx + panelTopPaddingPx + micButtonHeightPx + belowMicRegionPx).toInt()
     private val radialRadiusPx = dp(132f)
     private val knobRadiusPx = dp(28f)
     private val sideButtonSizePx = dp(46f)
-    private val barPaddingHPx = dp(14f)
+    private val barPaddingHPx = dp(16f)
     private val barInnerGapPx = dp(10f)
+    private val statusRowHeightPx = dp(20f)
+    private val memoryRefreshIntervalMs = 2_000L
 
     private var safeBottomInsetPx: Int = 0
     private var safeLeftInsetPx: Int = 0
@@ -94,6 +109,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     private val whisperBtnRect = RectF()
     private val gemmaBtnRect = RectF()
     private val backspaceBtnRect = RectF()
+    private val enterBtnRect = RectF()
     private val barCardRect = RectF()
     private val cancelBannerRect = RectF()
     private val cancelBannerButtonRect = RectF()
@@ -104,6 +120,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         NONE,
         SWITCH,
         BACKSPACE,
+        ENTER,
         CANCEL_BANNER,
     }
 
@@ -144,7 +161,23 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
     private val gemmaBtnPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF2E284D.toInt()
+        color = 0xFF3A3A3A.toInt()
+        style = Paint.Style.FILL
+    }
+    private val rainbowColors = intArrayOf(
+        0xFFFFB4B4.toInt(), // low-saturation red
+        0xFFFFD3A5.toInt(), // low-saturation orange
+        0xFFFBE98F.toInt(), // low-saturation yellow
+        0xFFB7E4C7.toInt(), // low-saturation green
+        0xFFA8D8F0.toInt(), // low-saturation blue
+        0xFFC4B5F0.toInt(), // low-saturation purple
+    )
+    private val enterBtnPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF2563EB.toInt()
+        style = Paint.Style.FILL
+    }
+    private val enterBtnPressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF5B93FF.toInt()
         style = Paint.Style.FILL
     }
     private val activeBtnStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -161,16 +194,28 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         color = 0xFF34D399.toInt()
         style = Paint.Style.FILL
     }
-    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val aiTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        textSize = sp(14f)
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         textAlign = Paint.Align.LEFT
     }
-    private val subLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xB8FFFFFF.toInt()
-        textSize = sp(10.5f)
-        textAlign = Paint.Align.LEFT
+    private val whiteGlyphStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val whiteGlyphFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.FILL
+    }
+    private val rainbowGlyphStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val rainbowGlyphFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
     }
     private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -242,6 +287,21 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         textAlign = Paint.Align.CENTER
     }
+    private val memoryTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0x99FFFFFF.toInt()
+        textSize = sp(10f)
+        textAlign = Paint.Align.RIGHT
+    }
+
+    // Live process memory readout shown in the bottom strip.
+    private var memoryUsageMb: Int = 0
+    private val memoryRefreshRunnable = object : Runnable {
+        override fun run() {
+            memoryUsageMb = readMemoryUsageMb()
+            invalidate()
+            postDelayed(this, memoryRefreshIntervalMs)
+        }
+    }
 
     init {
         setWillNotDraw(false)
@@ -274,72 +334,74 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     }
 
     private fun computeRects(w: Float, h: Float) {
-        val contentBottom = (h - safeBottomInsetPx - minBottomMarginPx).coerceAtLeast(barHeightPx)
-        val barTop = contentBottom - barHeightPx
-        val cardMarginLeft = dp(8f) + safeLeftInsetPx
-        val cardMarginRight = dp(8f) + safeRightInsetPx
-        barCardRect.set(cardMarginLeft, barTop + dp(4f), (w - cardMarginRight).coerceAtLeast(cardMarginLeft + dp(120f)), contentBottom)
+        val contentBottom = (h - safeBottomInsetPx).coerceAtLeast(dp(1f))
+        val contentHeight = panelTopPaddingPx + micButtonHeightPx + belowMicRegionPx
+        val panelTop = (contentBottom - contentHeight).coerceAtLeast(0f)
+        // Full-width rectangular panel: no floating card, spans to the bottom of the screen.
+        barCardRect.set(0f, panelTop, w, h)
 
-        val centerY = barCardRect.centerY()
-        val leftX = barCardRect.left + barPaddingHPx
-        val rightX = barCardRect.right - barPaddingHPx
+        val micTop = panelTop + panelTopPaddingPx
+        val micBottom = micTop + micButtonHeightPx
+        val centerY = (micTop + micBottom) / 2f
+
+        val contentLeft = safeLeftInsetPx + barPaddingHPx
+        val contentRight = (w - safeRightInsetPx - barPaddingHPx)
+            .coerceAtLeast(contentLeft + dp(120f))
 
         switchBtnRect.set(
-            leftX,
+            contentLeft,
             centerY - sideButtonSizePx / 2f,
-            leftX + sideButtonSizePx,
+            contentLeft + sideButtonSizePx,
             centerY + sideButtonSizePx / 2f,
         )
+        // Right column: backspace on top, blue enter key below it.
         backspaceBtnRect.set(
-            rightX - sideButtonSizePx,
-            centerY - sideButtonSizePx / 2f,
-            rightX,
-            centerY + sideButtonSizePx / 2f,
+            contentRight - sideButtonSizePx,
+            micTop,
+            contentRight,
+            micTop + sideButtonSizePx,
+        )
+        enterBtnRect.set(
+            contentRight - sideButtonSizePx,
+            micBottom - sideButtonSizePx,
+            contentRight,
+            micBottom,
         )
 
         val micsLeft = switchBtnRect.right + barInnerGapPx
         val micsRight = backspaceBtnRect.left - barInnerGapPx
         val totalMicWidth = (micsRight - micsLeft - barInnerGapPx).coerceAtLeast(dp(80f))
         val eachMicWidth = totalMicWidth / 2f
-        val micHeight = dp(52f)
 
-        whisperBtnRect.set(
-            micsLeft,
-            centerY - micHeight / 2f,
-            micsLeft + eachMicWidth,
-            centerY + micHeight / 2f,
-        )
+        whisperBtnRect.set(micsLeft, micTop, micsLeft + eachMicWidth, micBottom)
         gemmaBtnRect.set(
             whisperBtnRect.right + barInnerGapPx,
-            centerY - micHeight / 2f,
+            micTop,
             micsRight,
-            centerY + micHeight / 2f,
+            micBottom,
         )
 
-        val bannerBottom = barCardRect.top - dp(4f)
-        val bannerTop = bannerBottom - statusStripHeightPx
-        cancelBannerRect.set(cardMarginLeft + dp(8f), bannerTop, barCardRect.right - dp(8f), bannerBottom)
+        // Status hint row sits directly below the two mic buttons.
+        val statusTop = micBottom + dp(1f)
+        val statusBottom = statusTop + statusRowHeightPx
+        cancelBannerRect.set(contentLeft + dp(4f), statusTop, contentRight - dp(4f), statusBottom)
         cancelBannerButtonRect.set(
-            cancelBannerRect.right - dp(68f),
-            bannerTop + dp(3f),
-            cancelBannerRect.right - dp(6f),
-            bannerBottom - dp(3f),
+            cancelBannerRect.right - dp(64f),
+            statusTop + dp(2f),
+            cancelBannerRect.right - dp(4f),
+            statusBottom - dp(2f),
         )
     }
 
     fun getIdleTouchableTop(): Int {
         if (height <= 0) return 0
-        val top = if (statusMessage.isNotEmpty()) {
-            cancelBannerRect.top - dp(4f)
-        } else {
-            barCardRect.top - dp(4f)
-        }
-        return top.toInt().coerceIn(0, height)
+        return barCardRect.top.toInt().coerceIn(0, height)
     }
 
     fun getIdleTouchableBottom(): Int {
         if (height <= 0) return 0
-        return (barCardRect.bottom + dp(4f)).toInt().coerceIn(0, height)
+        // The rectangular panel reaches the bottom of the screen.
+        return height
     }
 
     fun updateLoadedState(engineType: String, modelId: String, isOnlineMode: Boolean) {
@@ -370,11 +432,13 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
+        drawBottomBar(canvas)
+
         if (statusMessage.isNotEmpty() && !isRadialExpanded) {
             drawStatusBanner(canvas)
         }
 
-        drawBottomBar(canvas)
+        drawMemoryUsage(canvas)
 
         if (isRadialExpanded && activeSource != null) {
             drawRadialDisc(canvas, activeSource!!)
@@ -382,87 +446,214 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     }
 
     private fun drawStatusBanner(canvas: Canvas) {
-        canvas.drawRoundRect(cancelBannerRect, dp(16f), dp(16f), pillBgPaint)
         val prevAlign = pillTextPaint.textAlign
         pillTextPaint.textAlign = Paint.Align.LEFT
         val textY = cancelBannerRect.centerY() - (pillTextPaint.descent() + pillTextPaint.ascent()) / 2f
-        canvas.drawText(statusMessage, cancelBannerRect.left + dp(14f), textY, pillTextPaint)
+        canvas.drawText(statusMessage, cancelBannerRect.left + dp(2f), textY, pillTextPaint)
         pillTextPaint.textAlign = prevAlign
 
         if (showCancelBanner) {
             canvas.drawRoundRect(cancelBannerButtonRect, dp(13f), dp(13f), knobCancelPaint)
             val cy = cancelBannerButtonRect.centerY() - (sectorTextPaint.descent() + sectorTextPaint.ascent()) / 2f
-            canvas.drawText("取消", cancelBannerButtonRect.centerX(), cy, sectorTextPaint)
+            canvas.drawText("停止", cancelBannerButtonRect.centerX(), cy, sectorTextPaint)
+        }
+    }
+
+    private fun drawMemoryUsage(canvas: Canvas) {
+        val label = if (memoryUsageMb > 0) "内存 $memoryUsageMb MB" else "内存 --"
+        val x = width - safeRightInsetPx - barPaddingHPx
+        val baseline = barCardRect.bottom - safeBottomInsetPx - dp(4f)
+        canvas.drawText(label, x, baseline, memoryTextPaint)
+    }
+
+    private fun readMemoryUsageMb(): Int {
+        return try {
+            val info = Debug.MemoryInfo()
+            Debug.getMemoryInfo(info)
+            info.totalPss / 1024
+        } catch (_: Throwable) {
+            val runtime = Runtime.getRuntime()
+            ((runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)).toInt()
         }
     }
 
     private fun drawBottomBar(canvas: Canvas) {
-        val cardRadius = dp(24f)
-        canvas.drawRoundRect(barCardRect, cardRadius, cardRadius, barCardPaint)
-        canvas.drawRoundRect(barCardRect, cardRadius, cardRadius, barBorderPaint)
+        // Full-width rectangular panel that fills from its top edge to the screen bottom.
+        canvas.drawRect(barCardRect, barCardPaint)
+        canvas.drawLine(0f, barCardRect.top, width.toFloat(), barCardRect.top, barBorderPaint)
 
         // Left circular switch keyboard button
         val switchPaint = if (idleTouchTarget == IdleTouchTarget.SWITCH) sideBtnPressedPaint else sideBtnPaint
         canvas.drawCircle(switchBtnRect.centerX(), switchBtnRect.centerY(), switchBtnRect.width() / 2f, switchPaint)
         drawKeyboardIcon(canvas, switchBtnRect.centerX(), switchBtnRect.centerY())
 
-        // Right circular backspace button
+        // Right column: backspace on top, blue enter key below it.
         val backspacePaint = if (idleTouchTarget == IdleTouchTarget.BACKSPACE) sideBtnPressedPaint else sideBtnPaint
         canvas.drawCircle(backspaceBtnRect.centerX(), backspaceBtnRect.centerY(), backspaceBtnRect.width() / 2f, backspacePaint)
         drawBackspaceIcon(canvas, backspaceBtnRect.centerX(), backspaceBtnRect.centerY())
 
-        // Whisper mic pill
-        val micRadius = dp(20f)
+        val enterPaint = if (idleTouchTarget == IdleTouchTarget.ENTER) enterBtnPressedPaint else enterBtnPaint
+        canvas.drawRoundRect(enterBtnRect, dp(14f), dp(14f), enterPaint)
+        drawEnterIcon(canvas, enterBtnRect.centerX(), enterBtnRect.centerY())
+
+        // The two large microphone buttons share one glyph size so they stay visually balanced.
+        val micGlyphHeight = computeMicGlyphHeight(gemmaBtnRect)
+        val micRadius = dp(26f)
+
+        // Whisper mic: original dark blue fill, white icon, no text.
         canvas.drawRoundRect(whisperBtnRect, micRadius, micRadius, whisperBtnPaint)
         if (loadedEngineType == "ASR") {
             canvas.drawRoundRect(whisperBtnRect, micRadius, micRadius, activeBtnStrokePaint)
         }
-        drawMicButtonContent(
+        drawScaledMicGlyph(
             canvas = canvas,
-            rect = whisperBtnRect,
-            title = "Whisper",
-            subtitle = if (loadedEngineType == "ASR") "已加载" else "原样识别",
-            isLoaded = loadedEngineType == "ASR",
-            isSparkle = false,
+            cx = whisperBtnRect.centerX(),
+            centerY = whisperBtnRect.centerY(),
+            heightPx = micGlyphHeight,
+            strokePaint = whiteGlyphStrokePaint,
+            fillPaint = whiteGlyphFillPaint,
         )
+        if (loadedEngineType == "ASR") {
+            canvas.drawCircle(whisperBtnRect.right - dp(12f), whisperBtnRect.top + dp(12f), dp(4f), loadedDotPaint)
+        }
 
-        // Gemma 4 mic pill
+        // AI mic: dark purple fill, light rainbow mic glyph plus "AI".
         canvas.drawRoundRect(gemmaBtnRect, micRadius, micRadius, gemmaBtnPaint)
         if (loadedEngineType == "LLM") {
             canvas.drawRoundRect(gemmaBtnRect, micRadius, micRadius, gemmaStrokePaint)
         }
-        val gemmaTitle = if (onlineModeEnabled) "在线 AI" else "Gemma 4"
-        drawMicButtonContent(
+        drawAiMicContent(canvas, gemmaBtnRect, micGlyphHeight)
+        if (loadedEngineType == "LLM") {
+            canvas.drawCircle(gemmaBtnRect.right - dp(12f), gemmaBtnRect.top + dp(12f), dp(4f), loadedDotPaint)
+        }
+    }
+
+    /** Largest mic glyph height that fits both the button height and the "AI" lockup width. */
+    private fun computeMicGlyphHeight(rect: RectF): Float {
+        val maxByHeight = (rect.height() - dp(16f)).coerceAtMost(dp(66f))
+        if (maxByHeight <= 0f) return 0f
+
+        val horizontalPadding = dp(14f)
+        val contentWidth = (rect.width() - horizontalPadding * 2f).coerceAtLeast(0f)
+        val gap = dp(10f)
+        // The drawn mic glyph is 12dp wide for every 16.5dp of height.
+        val glyphWidthRatio = 12f / 16.5f
+
+        val probeSize = 100f
+        aiTextPaint.textSize = probeSize
+        val probeBounds = Rect()
+        aiTextPaint.getTextBounds("AI", 0, 2, probeBounds)
+        val inkRatio = (probeBounds.height() / probeSize).coerceAtLeast(0.01f)
+        val aiWidthAtProbe = aiTextPaint.measureText("AI")
+
+        var glyphHeight = maxByHeight
+        val glyphWidth = glyphHeight * glyphWidthRatio
+        // "AI" is drawn at half the mic glyph height, so it takes less horizontal room.
+        val aiTextSize = (glyphHeight / inkRatio) / 2f
+        val aiWidth = aiWidthAtProbe * (aiTextSize / probeSize)
+        val totalWidth = glyphWidth + gap + aiWidth
+        if (totalWidth > contentWidth && totalWidth > 0f) {
+            glyphHeight *= contentWidth / totalWidth
+        }
+        // Halve the whole lockup (mic icon + "AI") relative to the previous size.
+        return (glyphHeight * 0.5f).coerceAtLeast(0f)
+    }
+
+    private fun drawAiMicContent(canvas: Canvas, rect: RectF, glyphHeight: Float) {
+        if (glyphHeight <= 0f) return
+        val gap = dp(10f)
+        val glyphWidthRatio = 12f / 16.5f
+
+        val probeSize = 100f
+        aiTextPaint.textSize = probeSize
+        val probeBounds = Rect()
+        aiTextPaint.getTextBounds("AI", 0, 2, probeBounds)
+        val inkRatio = (probeBounds.height() / probeSize).coerceAtLeast(0.01f)
+        val aiWidthAtProbe = aiTextPaint.measureText("AI")
+        val aiTextSize = (glyphHeight / inkRatio) / 2f
+        val aiWidth = aiWidthAtProbe * (aiTextSize / probeSize)
+        val glyphWidth = glyphHeight * glyphWidthRatio
+
+        val totalWidth = glyphWidth + gap + aiWidth
+        val startX = rect.centerX() - totalWidth / 2f
+        val centerY = rect.centerY()
+
+        // Light rainbow gradient applied to the mic glyph itself, not the button.
+        val glyphShader = LinearGradient(
+            0f,
+            centerY - glyphHeight / 2f,
+            0f,
+            centerY + glyphHeight / 2f,
+            rainbowColors,
+            null,
+            Shader.TileMode.CLAMP,
+        )
+        rainbowGlyphStrokePaint.shader = glyphShader
+        rainbowGlyphFillPaint.shader = glyphShader
+
+        drawScaledMicGlyph(
             canvas = canvas,
-            rect = gemmaBtnRect,
-            title = gemmaTitle,
-            subtitle = if (loadedEngineType == "LLM") "已加载" else "润色 · 截屏",
-            isLoaded = loadedEngineType == "LLM",
-            isSparkle = true,
+            cx = startX + glyphWidth / 2f,
+            centerY = centerY,
+            heightPx = glyphHeight,
+            strokePaint = rainbowGlyphStrokePaint,
+            fillPaint = rainbowGlyphFillPaint,
+        )
+
+        aiTextPaint.textSize = aiTextSize
+        val textBounds = Rect()
+        aiTextPaint.getTextBounds("AI", 0, 2, textBounds)
+        // Bottom-align "AI" with the bottom edge of the mic glyph.
+        val baseline = centerY + glyphHeight / 2f - textBounds.bottom
+        canvas.drawText("AI", startX + glyphWidth + gap, baseline, aiTextPaint)
+    }
+
+    private fun drawScaledMicGlyph(
+        canvas: Canvas,
+        cx: Float,
+        centerY: Float,
+        heightPx: Float,
+        strokePaint: Paint,
+        fillPaint: Paint,
+    ) {
+        if (heightPx <= 0f) return
+        // The base glyph is 16.5dp tall from capsule top to the stand foot.
+        val s = heightPx / dp(16.5f)
+        val cy = centerY - dp(1.25f) * s
+
+        strokePaint.strokeWidth = dp(2f) * s
+
+        val capsuleW = dp(6f) * s
+        val capsuleH = dp(10f) * s
+        scratchRect.set(
+            cx - capsuleW / 2f,
+            cy - capsuleH / 2f - dp(2f) * s,
+            cx + capsuleW / 2f,
+            cy + capsuleH / 2f - dp(2f) * s,
+        )
+        canvas.drawRoundRect(scratchRect, capsuleW / 2f, capsuleW / 2f, fillPaint)
+
+        scratchRect.set(cx - dp(6f) * s, cy - dp(5f) * s, cx + dp(6f) * s, cy + dp(6f) * s)
+        canvas.drawArc(scratchRect, 0f, 180f, false, strokePaint)
+        canvas.drawLine(cx, cy + dp(6f) * s, cx, cy + dp(9.5f) * s, strokePaint)
+        canvas.drawLine(
+            cx - dp(3.5f) * s,
+            cy + dp(9.5f) * s,
+            cx + dp(3.5f) * s,
+            cy + dp(9.5f) * s,
+            strokePaint,
         )
     }
 
-    private fun drawMicButtonContent(
-        canvas: Canvas,
-        rect: RectF,
-        title: String,
-        subtitle: String,
-        isLoaded: Boolean,
-        isSparkle: Boolean,
-    ) {
-        val iconCx = rect.left + dp(24f)
-        val iconCy = rect.centerY()
-        drawMicIcon(canvas, iconCx, iconCy, isSparkle)
-
-        val textX = rect.left + dp(40f)
-        val titleY = rect.centerY() - dp(2f)
-        val subY = rect.centerY() + dp(13f)
-        canvas.drawText(title, textX, titleY, labelPaint)
-        canvas.drawText(subtitle, textX, subY, subLabelPaint)
-
-        if (isLoaded) {
-            canvas.drawCircle(rect.right - dp(12f), rect.top + dp(12f), dp(4f), loadedDotPaint)
-        }
+    private fun drawEnterIcon(canvas: Canvas, cx: Float, cy: Float) {
+        val r = dp(9f)
+        val arrowX = cx - dp(5f)
+        val shaftY = cy + dp(3f)
+        val rightX = cx + dp(6f)
+        canvas.drawLine(rightX, cy - r, rightX, shaftY, iconPaint)
+        canvas.drawLine(rightX, shaftY, arrowX, shaftY, iconPaint)
+        canvas.drawLine(arrowX, shaftY, arrowX + dp(5f), shaftY - dp(5f), iconPaint)
+        canvas.drawLine(arrowX, shaftY, arrowX + dp(5f), shaftY + dp(5f), iconPaint)
     }
 
     private fun drawRadialDisc(canvas: Canvas, source: MicSource) {
@@ -532,8 +723,8 @@ class VoiceImeOverlayView @JvmOverloads constructor(
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 157.5f, "取消")
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 112.5f, "普通")
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 67.5f, "正式")
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 22.5f, "截屏")
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.28f, 90f, "松手普通润色")
+            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 22.5f, "指令")
+            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.28f, 90f, "普通转写")
         }
 
         // Floating action pill above disc
@@ -633,6 +824,12 @@ class VoiceImeOverlayView @JvmOverloads constructor(
                     invalidate()
                     return true
                 }
+                if (enterBtnRect.contains(x, y)) {
+                    idleTouchTarget = IdleTouchTarget.ENTER
+                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    invalidate()
+                    return true
+                }
                 val source = when {
                     whisperBtnRect.contains(x, y) -> MicSource.WHISPER
                     gemmaBtnRect.contains(x, y) -> MicSource.GEMMA
@@ -706,6 +903,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
                         }
                     }
                     IdleTouchTarget.BACKSPACE -> Unit // Already fired on ACTION_DOWN + repeat
+                    IdleTouchTarget.ENTER -> listener?.onEnterClick()
                     IdleTouchTarget.CANCEL_BANNER -> listener?.onCancelActiveGeneration()
                     IdleTouchTarget.NONE -> Unit
                 }
@@ -728,8 +926,15 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        removeCallbacks(memoryRefreshRunnable)
+        post(memoryRefreshRunnable)
+    }
+
     override fun onDetachedFromWindow() {
         removeCallbacks(backspaceRepeatRunnable)
+        removeCallbacks(memoryRefreshRunnable)
         super.onDetachedFromWindow()
     }
 

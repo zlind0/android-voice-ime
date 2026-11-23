@@ -41,60 +41,80 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    suspend fun captureToFile(outputFile: File): File? = suspendCancellableCoroutine { cont ->
-        takeScreenshot(
-            Display.DEFAULT_DISPLAY,
-            mainExecutor,
-            object : TakeScreenshotCallback {
-                override fun onSuccess(screenshot: ScreenshotResult) {
-                    val hardwareBuffer = screenshot.hardwareBuffer
-                    try {
-                        val colorSpace = screenshot.colorSpace
-                        val wrapped = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
-                        if (wrapped == null) {
-                            if (cont.isActive) cont.resume(null)
-                            return
-                        }
-                        val software = try {
-                            wrapped.copy(Bitmap.Config.ARGB_8888, false)
-                        } finally {
-                            wrapped.recycle()
-                        }
-                        if (software == null) {
-                            if (cont.isActive) cont.resume(null)
-                            return
-                        }
+    suspend fun captureToFile(outputFile: File, keepTopPx: Int = Int.MAX_VALUE): File? =
+        suspendCancellableCoroutine { cont ->
+            takeScreenshot(
+                Display.DEFAULT_DISPLAY,
+                mainExecutor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(screenshot: ScreenshotResult) {
+                        val hardwareBuffer = screenshot.hardwareBuffer
                         try {
-                            val scaled = ImageEncoder.downscaleBitmap(software, maxEdge = 896)
-                            try {
-                                outputFile.parentFile?.mkdirs()
-                                FileOutputStream(outputFile).use { out ->
-                                    scaled.compress(Bitmap.CompressFormat.JPEG, 88, out)
-                                }
-                                if (cont.isActive) cont.resume(outputFile)
-                            } finally {
-                                if (scaled !== software) scaled.recycle()
+                            val colorSpace = screenshot.colorSpace
+                            val wrapped = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
+                            if (wrapped == null) {
+                                if (cont.isActive) cont.resume(null)
+                                return
                             }
+                            val software = try {
+                                wrapped.copy(Bitmap.Config.ARGB_8888, false)
+                            } finally {
+                                wrapped.recycle()
+                            }
+                            if (software == null) {
+                                if (cont.isActive) cont.resume(null)
+                                return
+                            }
+                            var cropped: Bitmap? = null
+                            try {
+                                // Keep only the host content above the IME panel so no part of our
+                                // own UI ends up in the screenshot.
+                                val keepHeight = keepTopPx.coerceIn(1, software.height)
+                                val source = if (keepHeight < software.height) {
+                                    Bitmap.createBitmap(
+                                        software,
+                                        0,
+                                        0,
+                                        software.width,
+                                        keepHeight,
+                                    ).also { cropped = it }
+                                } else {
+                                    software
+                                }
+                                try {
+                                    val scaled = ImageEncoder.downscaleBitmap(source, maxEdge = 896)
+                                    try {
+                                        outputFile.parentFile?.mkdirs()
+                                        FileOutputStream(outputFile).use { out ->
+                                            scaled.compress(Bitmap.CompressFormat.JPEG, 88, out)
+                                        }
+                                        if (cont.isActive) cont.resume(outputFile)
+                                    } finally {
+                                        if (scaled !== source) scaled.recycle()
+                                    }
+                                } finally {
+                                    cropped?.recycle()
+                                }
+                            } finally {
+                                software.recycle()
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to save screenshot", e)
+                            if (cont.isActive) cont.resume(null)
                         } finally {
-                            software.recycle()
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to save screenshot", e)
-                        if (cont.isActive) cont.resume(null)
-                    } finally {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            runCatching { hardwareBuffer.close() }
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                runCatching { hardwareBuffer.close() }
+                            }
                         }
                     }
-                }
 
-                override fun onFailure(errorCode: Int) {
-                    Log.w(TAG, "takeScreenshot failed with errorCode=$errorCode")
-                    if (cont.isActive) cont.resume(null)
-                }
-            },
-        )
-    }
+                    override fun onFailure(errorCode: Int) {
+                        Log.w(TAG, "takeScreenshot failed with errorCode=$errorCode")
+                        if (cont.isActive) cont.resume(null)
+                    }
+                },
+            )
+        }
 
     companion object {
         @Volatile
@@ -108,8 +128,8 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
 
         fun isReady(): Boolean = instance != null
 
-        suspend fun captureScreenshotToFile(outputFile: File): File? =
-            instance?.captureToFile(outputFile)
+        suspend fun captureScreenshotToFile(outputFile: File, keepTopPx: Int = Int.MAX_VALUE): File? =
+            instance?.captureToFile(outputFile, keepTopPx)
 
         fun refreshSystemEnabledState(context: Context): Boolean {
             val enabledServices = Settings.Secure.getString(

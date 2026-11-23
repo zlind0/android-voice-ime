@@ -134,6 +134,10 @@ class LiteRtImeService : InputMethodService() {
                     performBackspace()
                 }
 
+                override fun onEnterClick() {
+                    sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
+                }
+
                 override fun onStartRecording(source: MicSource): Boolean {
                     if (ContextCompat.checkSelfPermission(
                             this@LiteRtImeService,
@@ -359,7 +363,14 @@ class LiteRtImeService : InputMethodService() {
                 // Allow radial overlay collapse to redraw before capturing host screen
                 delay(90L)
                 val targetShot = File(ipcDir, "$requestId.jpg")
-                screenshotFile = ScreenCaptureAccessibilityService.captureScreenshotToFile(targetShot)
+                // Crop the screenshot at the top edge of the IME panel so none of our UI is captured.
+                val location = IntArray(2)
+                overlayView.getLocationOnScreen(location)
+                val panelTopPx = location[1] + overlayView.getIdleTouchableTop()
+                screenshotFile = ScreenCaptureAccessibilityService.captureScreenshotToFile(
+                    targetShot,
+                    keepTopPx = if (panelTopPx > 0) panelTopPx else Int.MAX_VALUE,
+                )
                 if (screenshotFile == null) {
                     Log.w(TAG, "Screenshot capture returned null; proceeding without image or aborting")
                     commitGuard.complete(requestId)
