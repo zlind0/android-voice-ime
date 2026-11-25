@@ -14,6 +14,8 @@ class ImeSettingsStoreTest {
             val store = ImeSettingsStore(dir)
             assertEquals(1000, store.getSettings().handwritingFadeDelayMs)
             assertTrue(store.getSettings().handwritingAutoCommitFirst)
+            assertFalse(store.getSettings().handwritingShowGrid)
+            assertTrue(store.getSettings().handwritingDualBoxEnabled)
 
             store.saveSettings(
                 ImeSettings(
@@ -21,7 +23,8 @@ class ImeSettingsStoreTest {
                     handwritingAutoCommitFirst = false,
                     handwritingStrokeWidthDp = 7.5f,
                     handwritingInkColor = HandwritingInkColor.SKY_BLUE,
-                    handwritingShowGrid = false,
+                    handwritingShowGrid = true,
+                    handwritingDualBoxEnabled = false,
                     handwritingPanelHeightDp = 300,
                     keyboardHeightDp = 260,
                     keyboardShowNumberRow = true,
@@ -39,7 +42,8 @@ class ImeSettingsStoreTest {
             assertFalse(reloaded.handwritingAutoCommitFirst)
             assertEquals(7.5f, reloaded.handwritingStrokeWidthDp, 0.01f)
             assertEquals(HandwritingInkColor.SKY_BLUE, reloaded.handwritingInkColor)
-            assertFalse(reloaded.handwritingShowGrid)
+            assertTrue(reloaded.handwritingShowGrid)
+            assertFalse(reloaded.handwritingDualBoxEnabled)
             assertEquals(300, reloaded.handwritingPanelHeightDp)
             assertEquals(260, reloaded.keyboardHeightDp)
             assertTrue(reloaded.keyboardShowNumberRow)

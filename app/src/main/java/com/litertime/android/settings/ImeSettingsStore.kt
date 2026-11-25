@@ -62,7 +62,9 @@ data class ImeSettings(
     val handwritingAutoCommitFirst: Boolean = true,
     val handwritingStrokeWidthDp: Float = DEFAULT_HANDWRITING_STROKE_WIDTH_DP,
     val handwritingInkColor: HandwritingInkColor = HandwritingInkColor.WHITE,
-    val handwritingShowGrid: Boolean = true,
+    val handwritingShowGrid: Boolean = false,
+    /** When enabled, Chinese handwriting shows two side-by-side boxes for alternating writing. */
+    val handwritingDualBoxEnabled: Boolean = true,
     val handwritingPanelHeightDp: Int = DEFAULT_HANDWRITING_PANEL_HEIGHT_DP,
     /** English QWERTY keyboard settings. */
     val keyboardHeightDp: Int = DEFAULT_KEYBOARD_HEIGHT_DP,
@@ -173,7 +175,8 @@ class ImeSettingsStore(private val appFilesDir: File) {
                 ?: ImeSettings.DEFAULT_HANDWRITING_STROKE_WIDTH_DP)
                 .coerceIn(ImeSettings.MIN_HANDWRITING_STROKE_WIDTH_DP, ImeSettings.MAX_HANDWRITING_STROKE_WIDTH_DP),
             handwritingInkColor = HandwritingInkColor.fromId(props.getProperty("handwritingInkColor")),
-            handwritingShowGrid = props.getProperty("handwritingShowGrid", "true").toBoolean(),
+            handwritingShowGrid = props.getProperty("handwritingShowGrid", "false").toBoolean(),
+            handwritingDualBoxEnabled = props.getProperty("handwritingDualBoxEnabled", "true").toBoolean(),
             handwritingPanelHeightDp = (props.getProperty("handwritingPanelHeightDp")?.toIntOrNull()
                 ?: ImeSettings.DEFAULT_HANDWRITING_PANEL_HEIGHT_DP)
                 .coerceIn(ImeSettings.MIN_HANDWRITING_PANEL_HEIGHT_DP, ImeSettings.MAX_HANDWRITING_PANEL_HEIGHT_DP),
@@ -235,6 +238,7 @@ class ImeSettingsStore(private val appFilesDir: File) {
             )
             setProperty("handwritingInkColor", settings.handwritingInkColor.name)
             setProperty("handwritingShowGrid", settings.handwritingShowGrid.toString())
+            setProperty("handwritingDualBoxEnabled", settings.handwritingDualBoxEnabled.toString())
             setProperty(
                 "handwritingPanelHeightDp",
                 settings.handwritingPanelHeightDp

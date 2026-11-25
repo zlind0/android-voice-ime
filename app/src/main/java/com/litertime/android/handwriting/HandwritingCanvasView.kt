@@ -45,9 +45,10 @@ class HandwritingCanvasView @JvmOverloads constructor(
     private val strokes = mutableListOf<Path>()
     private var currentPath: Path? = null
 
-    private var showGrid: Boolean = true
+    private var showGrid: Boolean = false
     private var inkBaseColor: Int = Color.WHITE
     private var strokeAlpha: Float = 1f
+    private var isFadingOut: Boolean = false
     private var fadeAnimator: ValueAnimator? = null
 
     private val cardRect = RectF()
@@ -89,6 +90,7 @@ class HandwritingCanvasView @JvmOverloads constructor(
     fun clearImmediate() {
         fadeAnimator?.cancel()
         fadeAnimator = null
+        isFadingOut = false
         strokeAlpha = 1f
         displayPaint.color = applyAlpha(inkBaseColor, strokeAlpha)
         strokes.clear()
@@ -99,10 +101,12 @@ class HandwritingCanvasView @JvmOverloads constructor(
     fun startFadeOut(durationMs: Long = 250L, onFinished: () -> Unit) {
         fadeAnimator?.cancel()
         if (strokes.isEmpty()) {
+            isFadingOut = false
             strokeAlpha = 1f
             onFinished()
             return
         }
+        isFadingOut = true
         fadeAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
             duration = durationMs
             addUpdateListener { anim ->
@@ -119,6 +123,7 @@ class HandwritingCanvasView @JvmOverloads constructor(
 
                 override fun onAnimationEnd(animation: Animator) {
                     if (!cancelled) {
+                        isFadingOut = false
                         strokes.clear()
                         currentPath = null
                         strokeAlpha = 1f
@@ -163,10 +168,11 @@ class HandwritingCanvasView @JvmOverloads constructor(
                 parent?.requestDisallowInterceptTouchEvent(true)
                 fadeAnimator?.cancel()
                 fadeAnimator = null
-                if (strokeAlpha < 0.99f) {
+                if (isFadingOut || strokeAlpha < 0.99f) {
                     // User interrupted fade-out with a new stroke: discard old fading strokes cleanly.
                     strokes.clear()
                 }
+                isFadingOut = false
                 strokeAlpha = 1f
                 displayPaint.color = applyAlpha(inkBaseColor, 1f)
 
@@ -188,10 +194,13 @@ class HandwritingCanvasView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                currentPath?.lineTo(x, y)
+                val finishedPath = currentPath
+                finishedPath?.lineTo(x, y)
                 currentPath = null
                 invalidate()
-                strokeListener?.onStrokeEnd()
+                if (finishedPath != null) {
+                    strokeListener?.onStrokeEnd()
+                }
                 return true
             }
         }

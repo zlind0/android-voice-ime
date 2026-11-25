@@ -23,7 +23,17 @@ class HandwritingController {
         DELETE_EDITOR,
     }
 
+    data class StrokeStartResult(
+        val interruptedFade: Boolean,
+        val flushedPreviousBoxIndex: Int?,
+        val committedPreviousText: String?,
+        val candidatesCleared: Boolean,
+    )
+
     var state: State = State.IDLE
+        private set
+
+    var activeBoxIndex: Int = 0
         private set
 
     var hasCanvasStrokes: Boolean = false
@@ -39,8 +49,32 @@ class HandwritingController {
     var lastAutoCommittedText: String? = null
         private set
 
-    fun onStrokeStart(): Boolean {
+    fun hasUncommittedStrokes(): Boolean = hasCanvasStrokes && state != State.FADING_OUT
+
+    fun onStrokeStart(): Boolean = onStrokeStartInBox(activeBoxIndex).interruptedFade
+
+    fun onStrokeStartInBox(boxIndex: Int): StrokeStartResult {
+        if (boxIndex != activeBoxIndex) {
+            val prevBox = activeBoxIndex
+            val hadUncommitted = hasUncommittedStrokes()
+            val committedPrev = if (hadUncommitted) candidates.firstOrNull()?.text else null
+            val hadCandidates = candidates.isNotEmpty()
+
+            activeBoxIndex = boxIndex
+            lastAutoCommittedText = null
+            candidates = emptyList()
+            hasCanvasStrokes = true
+            state = State.DRAWING
+            return StrokeStartResult(
+                interruptedFade = false,
+                flushedPreviousBoxIndex = if (hadUncommitted) prevBox else null,
+                committedPreviousText = committedPrev,
+                candidatesCleared = hadCandidates,
+            )
+        }
+
         val wasFading = state == State.FADING_OUT
+        val candidatesCleared = wasFading && candidates.isNotEmpty()
         if (wasFading) {
             // Lock in the previously auto-committed character and start fresh for the next char.
             lastAutoCommittedText = null
@@ -52,7 +86,12 @@ class HandwritingController {
         }
         state = State.DRAWING
         hasCanvasStrokes = true
-        return wasFading
+        return StrokeStartResult(
+            interruptedFade = wasFading,
+            flushedPreviousBoxIndex = null,
+            committedPreviousText = null,
+            candidatesCleared = candidatesCleared,
+        )
     }
 
     fun onStrokeEnd() {
@@ -139,12 +178,15 @@ class HandwritingController {
         }
     }
 
-    fun clearAll(clearLastAutoCommit: Boolean = true) {
+    fun clearAll(clearLastAutoCommit: Boolean = true, resetActiveBox: Boolean = false) {
         hasCanvasStrokes = false
         state = State.IDLE
         candidates = emptyList()
         if (clearLastAutoCommit) {
             lastAutoCommittedText = null
+        }
+        if (resetActiveBox) {
+            activeBoxIndex = 0
         }
     }
 }

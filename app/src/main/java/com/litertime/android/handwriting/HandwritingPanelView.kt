@@ -2,6 +2,7 @@ package com.litertime.android.handwriting
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
@@ -25,8 +26,8 @@ import java.util.concurrent.Executors
 /**
  * Complete Chinese handwriting panel powered by `Ismantic/Handwritten`:
  * - Candidate bar on top (top-10 live predictions)
- * - 田字格 writing pad in the middle (auto-commits top-1 & fades out after configurable delay)
- * - Bottom bar: [标点] [😊] [，] [。] [！] [？] [空格]
+ * - 田字格 writing pad in the middle (single or dual alternating boxes; auto-commits top-1 & fades out after configurable delay)
+ * - Bottom bar: [标点] [😊] [空格] [，] [。]
  * - Sub-views for Chinese Punctuation Picker and shared Emoji Picker.
  */
 @SuppressLint("ViewConstructor")
@@ -68,12 +69,16 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
     private var currentSubView = SubView.CANVAS
     private var strokeRevision = 0
     private var recognizedRevision = 0
+    private var recognizedBoxIndex = -1
     private var pendingAutoCommitAfterRecognition = false
+    private val pendingCommitQueue = PendingCommitQueue()
 
     private val mainContent: LinearLayout
     private val candidateScroll: HorizontalScrollView
     private val candidateRow: LinearLayout
-    private val canvasView: HandwritingCanvasView
+    private val primaryCanvasView: HandwritingCanvasView
+    private val dualBoxSpacer: View
+    private val secondaryCanvasView: HandwritingCanvasView
     private val punctuationView: ChinesePunctuationView
     private val emojiView: EmojiPickerView
 
@@ -105,8 +110,10 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
         candidateScroll.addView(candidateRow)
         mainContent.addView(candidateScroll)
 
-        // Writing pad (田字格)
-        canvasView = HandwritingCanvasView(context).apply {
+        // Writing pad (single or dual 田字格)
+        val canvasContainer = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            isMotionEventSplittingEnabled = false
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
@@ -114,32 +121,25 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
             ).apply {
                 setMargins(dp(10f), dp(2f), dp(10f), dp(6f))
             }
-            strokeListener = object : HandwritingCanvasView.StrokeListener {
-                override fun onStrokeStart() {
-                    mainHandler.removeCallbacks(recognizeRunnable)
-                    mainHandler.removeCallbacks(autoCommitRunnable)
-                    pendingAutoCommitAfterRecognition = false
-                    val interruptedFade = controller.onStrokeStart()
-                    if (interruptedFade) {
-                        refreshCandidatesUi()
-                    }
-                }
-
-                override fun onStrokeEnd() {
-                    controller.onStrokeEnd()
-                    strokeRevision++
-                    mainHandler.removeCallbacks(recognizeRunnable)
-                    mainHandler.removeCallbacks(autoCommitRunnable)
-                    val delayMs = settings.handwritingFadeDelayMs.toLong()
-                    val recDelay = minOf(RECOGNIZE_DEBOUNCE_MS, (delayMs / 2L).coerceAtLeast(30L))
-                    mainHandler.postDelayed(recognizeRunnable, recDelay)
-                    mainHandler.postDelayed(autoCommitRunnable, delayMs)
-                }
-            }
         }
-        mainContent.addView(canvasView)
+        primaryCanvasView = createCanvasBox(boxIndex = 0).apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+        }
+        dualBoxSpacer = View(context).apply {
+            visibility = GONE
+            layoutParams = LinearLayout.LayoutParams(dp(8f), LinearLayout.LayoutParams.MATCH_PARENT)
+        }
+        secondaryCanvasView = createCanvasBox(boxIndex = 1).apply {
+            visibility = GONE
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+        }
+        canvasContainer.addView(primaryCanvasView)
+        canvasContainer.addView(dualBoxSpacer)
+        canvasContainer.addView(secondaryCanvasView)
+        updateDualBoxLayout()
+        mainContent.addView(canvasContainer)
 
-        // Bottom toolbar (44dp): [标点] [😊] [，] [。] [！] [？] [空格]
+        // Bottom toolbar (44dp): [标点] [😊] [空格] [，] [。]
         val bottomToolbar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -160,23 +160,31 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
                 showSubView(SubView.EMOJI)
             },
         )
-        listOf("，", "。", "！", "？").forEach { punct ->
-            bottomToolbar.addView(
-                createToolbarButton(label = punct, widthDp = 0f, weight = 1f, isModifier = false) {
-                    commitWithPendingFlush(punct)
-                },
-            )
-        }
         bottomToolbar.addView(
             createToolbarButton(
                 label = "空格",
                 widthDp = 0f,
-                weight = 1.45f,
+                weight = 1f,
                 isModifier = false,
                 isMutedText = true,
-                marginEndDp = 0f,
             ) {
                 commitWithPendingFlush(" ")
+            },
+        )
+        bottomToolbar.addView(
+            createToolbarButton(label = "，", widthDp = 46f, weight = 0f, isModifier = false) {
+                commitWithPendingFlush("，")
+            },
+        )
+        bottomToolbar.addView(
+            createToolbarButton(
+                label = "。",
+                widthDp = 46f,
+                weight = 0f,
+                isModifier = false,
+                marginEndDp = 0f,
+            ) {
+                commitWithPendingFlush("。")
             },
         )
         mainContent.addView(bottomToolbar)
@@ -227,8 +235,19 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
     }
 
     fun applySettings(newSettings: ImeSettings) {
+        val dualBoxChanged = settings.handwritingDualBoxEnabled != newSettings.handwritingDualBoxEnabled
         settings = newSettings
-        canvasView.applyStyle(
+        if (dualBoxChanged) {
+            flushPendingCharacter()
+            clearSession()
+        }
+        updateDualBoxLayout()
+        primaryCanvasView.applyStyle(
+            strokeWidthDp = newSettings.handwritingStrokeWidthDp,
+            inkColorArgb = newSettings.handwritingInkColor.argb,
+            showGridLines = newSettings.handwritingShowGrid,
+        )
+        secondaryCanvasView.applyStyle(
             strokeWidthDp = newSettings.handwritingStrokeWidthDp,
             inkColorArgb = newSettings.handwritingInkColor.argb,
             showGridLines = newSettings.handwritingShowGrid,
@@ -276,7 +295,7 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
                 mainHandler.removeCallbacks(autoCommitRunnable)
                 pendingAutoCommitAfterRecognition = false
                 strokeRevision++
-                canvasView.clearImmediate()
+                activeCanvas().clearImmediate()
                 refreshCandidatesUi()
                 true
             }
@@ -292,11 +311,12 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
         mainHandler.removeCallbacks(recognizeRunnable)
         mainHandler.removeCallbacks(autoCommitRunnable)
         pendingAutoCommitAfterRecognition = false
+        strokeRevision++
         val flushed = controller.flushPendingTopCandidate()
-        canvasView.clearImmediate()
+        clearAllCanvasesImmediate()
         refreshCandidatesUi()
         if (!flushed.isNullOrEmpty()) {
-            listener?.onCommitText(flushed)
+            commitOrdered(flushed)
         }
     }
 
@@ -305,8 +325,10 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
         mainHandler.removeCallbacks(autoCommitRunnable)
         pendingAutoCommitAfterRecognition = false
         strokeRevision++
-        controller.clearAll(clearLastAutoCommit = true)
-        canvasView.clearImmediate()
+        recognizedBoxIndex = -1
+        pendingCommitQueue.clear()
+        controller.clearAll(clearLastAutoCommit = true, resetActiveBox = true)
+        clearAllCanvasesImmediate()
         refreshCandidatesUi()
     }
 
@@ -332,16 +354,167 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
         }
     }
 
+    private fun createCanvasBox(boxIndex: Int): HandwritingCanvasView =
+        HandwritingCanvasView(context).apply {
+            strokeListener = object : HandwritingCanvasView.StrokeListener {
+                override fun onStrokeStart() {
+                    onBoxStrokeStart(boxIndex)
+                }
+
+                override fun onStrokeEnd() {
+                    onBoxStrokeEnd(boxIndex)
+                }
+            }
+        }
+
+    private fun canvasForBox(boxIndex: Int): HandwritingCanvasView =
+        if (boxIndex == 1 && settings.handwritingDualBoxEnabled) secondaryCanvasView else primaryCanvasView
+
+    private fun activeCanvas(): HandwritingCanvasView = canvasForBox(controller.activeBoxIndex)
+
+    private fun updateDualBoxLayout() {
+        val dual = settings.handwritingDualBoxEnabled
+        dualBoxSpacer.visibility = if (dual) VISIBLE else GONE
+        secondaryCanvasView.visibility = if (dual) VISIBLE else GONE
+    }
+
+    private fun clearAllCanvasesImmediate() {
+        primaryCanvasView.clearImmediate()
+        secondaryCanvasView.clearImmediate()
+    }
+
+    private fun onBoxStrokeStart(boxIndex: Int) {
+        mainHandler.removeCallbacks(recognizeRunnable)
+        mainHandler.removeCallbacks(autoCommitRunnable)
+        pendingAutoCommitAfterRecognition = false
+
+        val prevBox = controller.activeBoxIndex
+        val prevWasFresh = recognizedRevision == strokeRevision && recognizedBoxIndex == prevBox
+        val result = controller.onStrokeStartInBox(boxIndex)
+        strokeRevision++
+
+        if (result.flushedPreviousBoxIndex != null) {
+            val flushedBox = result.flushedPreviousBoxIndex
+            val prevCanvas = canvasForBox(flushedBox)
+            if (prevWasFresh) {
+                val committed = result.committedPreviousText
+                if (!committed.isNullOrEmpty()) {
+                    commitOrdered(committed)
+                }
+            } else {
+                val rec = recognizer
+                if (rec != null && prevCanvas.hasStrokes()) {
+                    val bmp = prevCanvas.renderToBitmap()
+                    enqueueAsyncFlushRecognition(rec, bmp)
+                } else if (!result.committedPreviousText.isNullOrEmpty()) {
+                    commitOrdered(result.committedPreviousText)
+                }
+            }
+            prevCanvas.startFadeOut(FADE_OUT_DURATION_MS) {
+                onBoxFadeFinished(flushedBox)
+            }
+        }
+
+        if (result.interruptedFade || result.candidatesCleared || result.flushedPreviousBoxIndex != null) {
+            refreshCandidatesUi()
+        }
+    }
+
+    private fun onBoxStrokeEnd(boxIndex: Int) {
+        if (boxIndex != controller.activeBoxIndex) return
+        controller.onStrokeEnd()
+        strokeRevision++
+        mainHandler.removeCallbacks(recognizeRunnable)
+        mainHandler.removeCallbacks(autoCommitRunnable)
+        val delayMs = settings.handwritingFadeDelayMs.toLong()
+        val recDelay = minOf(RECOGNIZE_DEBOUNCE_MS, (delayMs / 2L).coerceAtLeast(30L))
+        mainHandler.postDelayed(recognizeRunnable, recDelay)
+        mainHandler.postDelayed(autoCommitRunnable, delayMs)
+    }
+
+    private fun onBoxFadeFinished(boxIndex: Int) {
+        if (boxIndex == controller.activeBoxIndex) {
+            controller.onFadeFinished()
+            refreshCandidatesUi()
+        }
+    }
+
+    private fun commitOrdered(text: String) {
+        if (text.isEmpty()) return
+        pendingCommitQueue.enqueueCommit(text).forEach { toCommit ->
+            listener?.onCommitText(toCommit)
+        }
+    }
+
+    private fun enqueueAsyncFlushRecognition(rec: HCCRRecognizer, bmp: Bitmap) {
+        val token = pendingCommitQueue.reservePending()
+        inferenceExecutor.execute {
+            val topText = try {
+                rec.recognizeBitmap(bmp, HCCRRecognizer.DEFAULT_TOP_K).firstOrNull()?.text
+            } catch (t: Throwable) {
+                Log.w(TAG, "HCCR flush inference error", t)
+                null
+            } finally {
+                bmp.recycle()
+            }
+            mainHandler.post {
+                pendingCommitQueue.resolve(token, topText).forEach { toCommit ->
+                    listener?.onCommitText(toCommit)
+                }
+            }
+        }
+    }
+
     private fun commitWithPendingFlush(text: String) {
-        flushPendingCharacter()
-        listener?.onCommitText(text)
+        mainHandler.removeCallbacks(recognizeRunnable)
+        mainHandler.removeCallbacks(autoCommitRunnable)
+        pendingAutoCommitAfterRecognition = false
+
+        if (controller.hasUncommittedStrokes()) {
+            val targetCanvas = activeCanvas()
+            val isFresh = recognizedRevision == strokeRevision && recognizedBoxIndex == controller.activeBoxIndex
+            if (isFresh) {
+                val flushed = controller.flushPendingTopCandidate()
+                strokeRevision++
+                clearAllCanvasesImmediate()
+                refreshCandidatesUi()
+                if (!flushed.isNullOrEmpty()) {
+                    commitOrdered(flushed)
+                }
+            } else {
+                val rec = recognizer
+                val snapshot = if (rec != null && targetCanvas.hasStrokes()) {
+                    targetCanvas.renderToBitmap()
+                } else {
+                    null
+                }
+                val fallback = controller.flushPendingTopCandidate()
+                strokeRevision++
+                clearAllCanvasesImmediate()
+                refreshCandidatesUi()
+                if (rec != null && snapshot != null) {
+                    enqueueAsyncFlushRecognition(rec, snapshot)
+                } else if (!fallback.isNullOrEmpty()) {
+                    commitOrdered(fallback)
+                }
+            }
+        } else {
+            controller.clearAll(clearLastAutoCommit = true)
+            strokeRevision++
+            clearAllCanvasesImmediate()
+            refreshCandidatesUi()
+        }
+
+        commitOrdered(text)
     }
 
     private fun runLiveRecognition() {
         val rec = recognizer ?: return
-        if (!canvasView.hasStrokes()) return
+        val targetBox = controller.activeBoxIndex
+        val targetCanvas = canvasForBox(targetBox)
+        if (!targetCanvas.hasStrokes()) return
         val targetRevision = strokeRevision
-        val bmp = canvasView.renderToBitmap()
+        val bmp = targetCanvas.renderToBitmap()
 
         inferenceExecutor.execute {
             val results = try {
@@ -353,10 +526,11 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
                 bmp.recycle()
             }
             mainHandler.post {
-                if (targetRevision != strokeRevision) {
+                if (targetRevision != strokeRevision || targetBox != controller.activeBoxIndex) {
                     return@post
                 }
                 recognizedRevision = targetRevision
+                recognizedBoxIndex = targetBox
                 controller.onRecognitionResult(results)
                 refreshCandidatesUi()
                 if (pendingAutoCommitAfterRecognition) {
@@ -368,8 +542,8 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
     }
 
     private fun onAutoCommitTimerFired() {
-        if (!canvasView.hasStrokes()) return
-        if (recognizedRevision != strokeRevision) {
+        if (!activeCanvas().hasStrokes()) return
+        if (recognizedRevision != strokeRevision || recognizedBoxIndex != controller.activeBoxIndex) {
             // Recognition is still running (or debounced); run immediately if not yet started.
             pendingAutoCommitAfterRecognition = true
             mainHandler.removeCallbacks(recognizeRunnable)
@@ -380,14 +554,14 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
     }
 
     private fun performAutoCommitAndFade() {
+        val targetBox = controller.activeBoxIndex
         val committed = controller.onAutoCommitTimeout(settings.handwritingAutoCommitFirst)
         if (!committed.isNullOrEmpty()) {
-            listener?.onCommitText(committed)
+            commitOrdered(committed)
         }
         refreshCandidatesUi()
-        canvasView.startFadeOut(FADE_OUT_DURATION_MS) {
-            controller.onFadeFinished()
-            refreshCandidatesUi()
+        canvasForBox(targetBox).startFadeOut(FADE_OUT_DURATION_MS) {
+            onBoxFadeFinished(targetBox)
         }
     }
 
@@ -398,6 +572,7 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
             val hint = when {
                 modelLoadError != null -> "手写模型加载失败: $modelLoadError"
                 recognizer == null -> "正在加载手写模型…"
+                settings.handwritingDualBoxEnabled -> "在下方双格交替手写汉字"
                 else -> "在下方田字格手写汉字"
             }
             val tv = TextView(context).apply {
@@ -454,12 +629,12 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
 
         when (val action = controller.onCandidateSelected(candidateText)) {
             is HandwritingController.CommitAction.Commit -> {
-                canvasView.clearImmediate()
+                activeCanvas().clearImmediate()
                 refreshCandidatesUi()
-                listener?.onCommitText(action.text)
+                commitOrdered(action.text)
             }
             is HandwritingController.CommitAction.ReplaceLast -> {
-                canvasView.clearImmediate()
+                activeCanvas().clearImmediate()
                 refreshCandidatesUi()
                 listener?.onReplaceLastText(action.deleteChars, action.replacement)
             }

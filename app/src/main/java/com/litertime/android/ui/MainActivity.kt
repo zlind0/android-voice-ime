@@ -506,7 +506,9 @@ private fun LiteRtImeSettingsScreen(
     val inputPreview = if (settings.stripTrailingPeriod) "句尾句号已去除" else "保留句尾句号"
 
     val traditionalInputPreview = buildString {
-        append(String.format(Locale.US, "手写淡出 %.1fs", settings.handwritingFadeDelayMs / 1000f))
+        append(if (settings.handwritingDualBoxEnabled) "双格手写" else "单格手写")
+        append(" · ")
+        append(String.format(Locale.US, "淡出 %.1fs", settings.handwritingFadeDelayMs / 1000f))
         append(" · ")
         append(if (settings.handwritingAutoCommitFirst) "首字上屏" else "手动选字")
         append(" · ")
@@ -1107,6 +1109,28 @@ private fun LiteRtImeSettingsScreen(
                             checked = settings.handwritingAutoCommitFirst,
                             onCheckedChange = { checked ->
                                 settings = settingsStore.update { it.copy(handwritingAutoCommitFirst = checked) }
+                            },
+                        )
+                    }
+
+                    PastelDivider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("双格手写", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = "左右双田字格交替书写，在另一格落笔时自动将上一格首选字上屏，无需等待淡出",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        PastelSwitch(
+                            checked = settings.handwritingDualBoxEnabled,
+                            onCheckedChange = { checked ->
+                                settings = settingsStore.update { it.copy(handwritingDualBoxEnabled = checked) }
                             },
                         )
                     }
