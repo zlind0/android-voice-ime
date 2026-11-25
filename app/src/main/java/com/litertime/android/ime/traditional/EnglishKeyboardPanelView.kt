@@ -5,6 +5,7 @@ import android.content.Context
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import com.litertime.android.settings.ImeSettings
+import com.litertime.android.ui.PastelPalette
 
 /**
  * English traditional keyboard panel switching between [QwertyKeyboardView] (QWERTY, Symbols,
@@ -32,7 +33,7 @@ class EnglishKeyboardPanelView(context: Context) : FrameLayout(context) {
     private val emojiView: EmojiPickerView
 
     init {
-        setBackgroundColor(0xFF1A1D24.toInt())
+        setBackgroundColor(PastelPalette.BG_CANVAS)
 
         qwertyView = QwertyKeyboardView(context).apply {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)

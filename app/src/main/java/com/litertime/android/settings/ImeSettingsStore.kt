@@ -21,9 +21,9 @@ enum class LlmProviderType(val displayName: String) {
 
 enum class HandwritingInkColor(val displayName: String, val argb: Int) {
     WHITE("纯白", 0xFFFFFFFF.toInt()),
-    SKY_BLUE("天蓝", 0xFF60A5FA.toInt()),
-    EMERALD("翠绿", 0xFF34D399.toInt()),
-    AMBER("琥珀", 0xFFFBBF24.toInt());
+    SKY_BLUE("天蓝", 0xFFADDDEF.toInt()),
+    EMERALD("翠绿", 0xFFB2EAD3.toInt()),
+    AMBER("琥珀", 0xFFF5E29E.toInt());
 
     companion object {
         fun fromId(value: String?): HandwritingInkColor =

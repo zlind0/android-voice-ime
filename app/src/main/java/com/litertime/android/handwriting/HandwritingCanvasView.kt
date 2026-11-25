@@ -15,6 +15,7 @@ import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import com.litertime.android.ui.PastelPalette
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -51,16 +52,11 @@ class HandwritingCanvasView @JvmOverloads constructor(
 
     private val cardRect = RectF()
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF232732.toInt()
+        color = PastelPalette.SURFACE_PAD
         style = Paint.Style.FILL
     }
-    private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x33FFFFFF
-        style = Paint.Style.STROKE
-        strokeWidth = dp(1f)
-    }
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x28FFFFFF
+        color = PastelPalette.GRID_LINE
         style = Paint.Style.STROKE
         strokeWidth = dp(1f)
         pathEffect = DashPathEffect(floatArrayOf(dp(6f), dp(5f)), 0f)
@@ -142,10 +138,9 @@ class HandwritingCanvasView @JvmOverloads constructor(
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
 
-        val radius = dp(12f)
-        cardRect.set(dp(1f), dp(1f), w - dp(1f), h - dp(1f))
+        val radius = dp(14f)
+        cardRect.set(0f, 0f, w, h)
         canvas.drawRoundRect(cardRect, radius, radius, bgPaint)
-        canvas.drawRoundRect(cardRect, radius, radius, borderPaint)
 
         if (showGrid) {
             val cx = w / 2f

@@ -2,9 +2,9 @@ package com.litertime.android.ime.traditional
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.os.Handler
 import android.os.Looper
 import android.util.TypedValue
@@ -18,6 +18,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.litertime.android.ui.PastelPalette
 
 /**
  * Shared Emoji Picker backed by FlorisBoard's Unicode CLDR `emoji/root.txt` plus persisted recent
@@ -70,7 +71,7 @@ class EmojiPickerView(
 
     init {
         orientation = VERTICAL
-        setBackgroundColor(0xFF1A1D24.toInt())
+        setBackgroundColor(PastelPalette.BG_CANVAS)
 
         // 1. Top category tab strip
         val tabScroll = HorizontalScrollView(context).apply {
@@ -84,14 +85,6 @@ class EmojiPickerView(
         }
         tabScroll.addView(tabsRow)
         addView(tabScroll)
-
-        // Subtle divider
-        addView(
-            View(context).apply {
-                setBackgroundColor(0x1FFFFFFF)
-                layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dp(1f).coerceAtLeast(1))
-            },
-        )
 
         // 2. Emoji grid
         recyclerView = RecyclerView(context).apply {
@@ -114,11 +107,11 @@ class EmojiPickerView(
 
         backButton = TextView(context).apply {
             text = initialReturnLabel
-            setTextColor(Color.WHITE)
+            setTextColor(PastelPalette.TEXT_ON_DARK_SKY)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             gravity = Gravity.CENTER
-            background = keyBackground(0xFF282D38.toInt(), dpF(8f))
+            background = keyStateBackground(PastelPalette.SURFACE_MOD_KEY, PastelPalette.SURFACE_PRESSED, dpF(8.5f))
             setPadding(dp(14f), dp(6f), dp(14f), dp(6f))
             layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT)
             setOnClickListener {
@@ -129,7 +122,7 @@ class EmojiPickerView(
         bottomBar.addView(backButton)
 
         categoryTitleView = TextView(context).apply {
-            setTextColor(0xAAFFFFFF.toInt())
+            setTextColor(PastelPalette.TEXT_MUTED)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             gravity = Gravity.CENTER
             layoutParams = LayoutParams(0, LayoutParams.MATCH_PARENT, 1f)
@@ -138,10 +131,10 @@ class EmojiPickerView(
 
         backspaceButton = TextView(context).apply {
             text = "⌫"
-            setTextColor(Color.WHITE)
+            setTextColor(PastelPalette.TEXT_ON_DARK_SKY)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             gravity = Gravity.CENTER
-            background = keyBackground(0xFF282D38.toInt(), dpF(8f))
+            background = keyBackground(PastelPalette.SURFACE_MOD_KEY, dpF(8.5f))
             setPadding(dp(16f), 0, dp(16f), 0)
             layoutParams = LayoutParams(dp(58f), LayoutParams.MATCH_PARENT)
             setOnTouchListener { v, ev -> handleBackspaceTouch(v, ev) }
@@ -209,11 +202,11 @@ class EmojiPickerView(
         tabViews.forEachIndexed { i, tv ->
             val active = i == clamped
             tv.background = if (active) {
-                keyBackground(0xFF263B5E.toInt(), dpF(8f), strokeColor = 0xFF60A5FA.toInt())
+                keyBackground(PastelPalette.SKY_BLUE, dpF(8.5f))
             } else {
                 null
             }
-            tv.alpha = if (active) 1f else 0.72f
+            tv.alpha = if (active) 1f else 0.68f
         }
 
         if (clamped == 0) {
@@ -230,7 +223,7 @@ class EmojiPickerView(
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 backspaceHeld = true
-                v.background = keyBackground(0xFF3E4759.toInt(), dpF(8f))
+                v.background = keyBackground(PastelPalette.SURFACE_PRESSED, dpF(8.5f))
                 triggerHaptic()
                 listener?.onBackspaceClick()
                 mainHandler.removeCallbacks(backspaceRepeatRunnable)
@@ -240,7 +233,7 @@ class EmojiPickerView(
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 backspaceHeld = false
                 mainHandler.removeCallbacks(backspaceRepeatRunnable)
-                v.background = keyBackground(0xFF282D38.toInt(), dpF(8f))
+                v.background = keyBackground(PastelPalette.SURFACE_MOD_KEY, dpF(8.5f))
                 return true
             }
         }
@@ -253,17 +246,19 @@ class EmojiPickerView(
         }
     }
 
+    private fun keyStateBackground(normalColor: Int, pressedColor: Int, radiusPx: Float): StateListDrawable =
+        StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), keyBackground(pressedColor, radiusPx))
+            addState(intArrayOf(), keyBackground(normalColor, radiusPx))
+        }
+
     private fun keyBackground(
         fillColor: Int,
         radiusPx: Float,
-        strokeColor: Int? = null,
     ): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = radiusPx
         setColor(fillColor)
-        if (strokeColor != null) {
-            setStroke(dp(1f).coerceAtLeast(1), strokeColor)
-        }
     }
 
     private inner class EmojiAdapter : RecyclerView.Adapter<EmojiAdapter.Holder>() {
@@ -279,7 +274,7 @@ class EmojiPickerView(
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
             val tv = TextView(parent.context).apply {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 23f)
-                setTextColor(Color.WHITE)
+                setTextColor(PastelPalette.TEXT_PRIMARY)
                 gravity = Gravity.CENTER
                 layoutParams = RecyclerView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,

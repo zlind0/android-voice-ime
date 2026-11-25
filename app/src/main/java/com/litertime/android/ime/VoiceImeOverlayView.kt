@@ -7,13 +7,10 @@ import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.Debug
 import android.util.AttributeSet
@@ -23,6 +20,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.PathInterpolator
+import com.litertime.android.ui.PastelPalette
 import java.io.File
 import java.util.Locale
 import kotlin.math.abs
@@ -209,178 +207,201 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         }
     }
 
-    // Paints
+    // Paints (Dark Pastel palette, borderless)
     private val barCardPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xF51A1D24.toInt()
+        color = PastelPalette.BG_CANVAS
         style = Paint.Style.FILL
     }
-    private val barBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x33FFFFFF
-        style = Paint.Style.STROKE
-        strokeWidth = dp(1f)
-    }
     private val sideBtnPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF282D38.toInt()
+        color = PastelPalette.SURFACE_SIDE_BTN
         style = Paint.Style.FILL
     }
     private val sideBtnPressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF394152.toInt()
+        color = PastelPalette.SURFACE_PRESSED
         style = Paint.Style.FILL
     }
     private val sideBtnActivePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF263B5E.toInt()
+        color = PastelPalette.SKY_BLUE
         style = Paint.Style.FILL
     }
-    private val whisperBtnPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF23394D.toInt()
+    private val sideBtnActivePressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.SKY_BLUE_PRESSED
         style = Paint.Style.FILL
     }
-    private val gemmaBtnPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF3A3A3A.toInt()
+    private val micInactivePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.SURFACE_MIC_INACTIVE
         style = Paint.Style.FILL
     }
-    private val rainbowColors = intArrayOf(
-        0xFFFFB4B4.toInt(),
-        0xFFFFD3A5.toInt(),
-        0xFFFBE98F.toInt(),
-        0xFFB7E4C7.toInt(),
-        0xFFA8D8F0.toInt(),
-        0xFFC4B5F0.toInt(),
-    )
+    private val micInactivePressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.SURFACE_PRESSED
+        style = Paint.Style.FILL
+    }
+    private val micLoadedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.SKY_BLUE
+        style = Paint.Style.FILL
+    }
+    private val micLoadedPressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.SKY_BLUE_PRESSED
+        style = Paint.Style.FILL
+    }
     private val enterBtnPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF2563EB.toInt()
+        color = PastelPalette.PINK_LIGHT
         style = Paint.Style.FILL
     }
     private val enterBtnPressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF5B93FF.toInt()
-        style = Paint.Style.FILL
-    }
-    private val activeBtnStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF60A5FA.toInt()
-        style = Paint.Style.STROKE
-        strokeWidth = dp(1.5f)
-    }
-    private val gemmaStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFA78BFA.toInt()
-        style = Paint.Style.STROKE
-        strokeWidth = dp(1.5f)
-    }
-    private val loadedDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF34D399.toInt()
+        color = PastelPalette.PINK_PRESSED
         style = Paint.Style.FILL
     }
     private val aiTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        color = PastelPalette.TEXT_ON_DARK_SKY
+        typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
         textAlign = Paint.Align.LEFT
     }
     private val leftBtnLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        color = PastelPalette.TEXT_ON_DARK_SKY
+        typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
         textAlign = Paint.Align.CENTER
     }
-    private val whiteGlyphStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+    private val lightGlyphStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.TEXT_ON_DARK_SKY
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
-    private val whiteGlyphFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+    private val lightGlyphFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.TEXT_ON_DARK_SKY
         style = Paint.Style.FILL
     }
-    private val rainbowGlyphStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val darkGlyphStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.INK_ON_PASTEL
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
-    private val rainbowGlyphFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val darkGlyphFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.INK_ON_PASTEL
         style = Paint.Style.FILL
     }
     private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = PastelPalette.TEXT_ON_DARK_SKY
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1.75f)
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val iconFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.TEXT_ON_DARK_SKY
+        style = Paint.Style.FILL
+    }
+    private val iconDarkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.INK_ON_PASTEL
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1.75f)
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val iconDarkFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.INK_ON_PASTEL
+        style = Paint.Style.FILL
+    }
+    private val enterIconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.INK_ON_PINK
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1.85f)
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val roseIconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.INK_ON_ROSE
         style = Paint.Style.STROKE
         strokeWidth = dp(1.8f)
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
-    private val iconFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+    private val roseIconFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.INK_ON_ROSE
         style = Paint.Style.FILL
     }
     private val discBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xEC161922.toInt()
+        color = PastelPalette.DISC_BG
         style = Paint.Style.FILL
     }
-    private val discBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x4DFFFFFF
-        style = Paint.Style.STROKE
-        strokeWidth = dp(1.5f)
-    }
     private val sectorHighlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x5560A5FA
+        color = PastelPalette.SECTOR_HIGHLIGHT
         style = Paint.Style.FILL
     }
     private val sectorCancelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x66EF4444
+        color = PastelPalette.SECTOR_CANCEL
         style = Paint.Style.FILL
     }
     private val centerHighlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x3A38BDF8
+        color = PastelPalette.CENTER_HIGHLIGHT
         style = Paint.Style.FILL
     }
     private val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x30FFFFFF
+        color = PastelPalette.SECTOR_DIVIDER
         style = Paint.Style.STROKE
         strokeWidth = dp(1f)
     }
     private val sectorTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = PastelPalette.TEXT_PRIMARY
         textSize = sp(11.5f)
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+    }
+    private val cancelTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.INK_ON_ROSE
+        textSize = sp(11.5f)
+        typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+    }
+    private val chipTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.TEXT_PRIMARY
+        textSize = sp(11.5f)
+        typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
         textAlign = Paint.Align.CENTER
     }
     private val knobPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF3B82F6.toInt()
+        color = PastelPalette.SKY_BLUE
         style = Paint.Style.FILL
     }
     private val knobCancelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFEF4444.toInt()
+        color = PastelPalette.ROSE_DANGER
         style = Paint.Style.FILL
     }
     private val knobGemmaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF8B5CF6.toInt()
+        color = PastelPalette.SKY_BLUE
         style = Paint.Style.FILL
     }
     private val chipBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF2A3140.toInt()
+        color = PastelPalette.SURFACE_CHIP_IDLE
         style = Paint.Style.FILL
     }
     private val chipSelectedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF2563EB.toInt()
+        color = PastelPalette.SKY_BLUE
         style = Paint.Style.FILL
     }
     private val chipDangerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFB91C1C.toInt()
+        color = PastelPalette.ROSE_DANGER
         style = Paint.Style.FILL
     }
     private val amplitudeRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x6693C5FD
+        color = PastelPalette.AMPLITUDE_RING
         style = Paint.Style.STROKE
         strokeWidth = dp(3f)
     }
     private val pillBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xE6111827.toInt()
+        color = PastelPalette.PILL_BG
         style = Paint.Style.FILL
     }
     private val pillTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = PastelPalette.TEXT_PRIMARY
         textSize = sp(12f)
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
         textAlign = Paint.Align.CENTER
     }
     private val memoryTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x99FFFFFF.toInt()
+        color = PastelPalette.TEXT_MUTED
         textSize = sp(10f)
         textAlign = Paint.Align.RIGHT
     }
@@ -734,8 +755,8 @@ class VoiceImeOverlayView @JvmOverloads constructor(
 
         if (showCancelBanner) {
             canvas.drawRoundRect(cancelBannerButtonRect, dp(10f), dp(10f), knobCancelPaint)
-            val cy = cancelBannerButtonRect.centerY() - (sectorTextPaint.descent() + sectorTextPaint.ascent()) / 2f
-            canvas.drawText("停止", cancelBannerButtonRect.centerX(), cy, sectorTextPaint)
+            val cy = cancelBannerButtonRect.centerY() - (cancelTextPaint.descent() + cancelTextPaint.ascent()) / 2f
+            canvas.drawText("停止", cancelBannerButtonRect.centerX(), cy, cancelTextPaint)
         }
     }
 
@@ -795,36 +816,33 @@ class VoiceImeOverlayView @JvmOverloads constructor(
 
     private fun drawBottomBar(canvas: Canvas) {
         canvas.drawRect(barCardRect, barCardPaint)
-        canvas.drawLine(0f, barCardRect.top, width.toFloat(), barCardRect.top, barBorderPaint)
 
         val p = panelExpandProgress.coerceIn(0f, 1f)
         val sideCorner = lerp(dp(14f), dp(12f), p)
 
         // Left button 1: English QWERTY (Keyboard icon + "En")
         val enActive = expandedMode == ExpandedPanelMode.ENGLISH_KEYBOARD
+        val enPressed = idleTouchTarget == IdleTouchTarget.ENGLISH
         val enPaint = when {
-            idleTouchTarget == IdleTouchTarget.ENGLISH -> sideBtnPressedPaint
+            enActive && enPressed -> sideBtnActivePressedPaint
             enActive -> sideBtnActivePaint
+            enPressed -> sideBtnPressedPaint
             else -> sideBtnPaint
         }
         canvas.drawRoundRect(englishBtnRect, sideCorner, sideCorner, enPaint)
-        if (enActive) {
-            canvas.drawRoundRect(englishBtnRect, sideCorner, sideCorner, activeBtnStrokePaint)
-        }
-        drawEnglishButtonContent(canvas, englishBtnRect)
+        drawEnglishButtonContent(canvas, englishBtnRect, isActive = enActive)
 
         // Left button 2: Chinese Handwriting (Pen icon + "中")
         val zhActive = expandedMode == ExpandedPanelMode.CHINESE_HANDWRITING
+        val zhPressed = idleTouchTarget == IdleTouchTarget.HANDWRITING
         val zhPaint = when {
-            idleTouchTarget == IdleTouchTarget.HANDWRITING -> sideBtnPressedPaint
+            zhActive && zhPressed -> sideBtnActivePressedPaint
             zhActive -> sideBtnActivePaint
+            zhPressed -> sideBtnPressedPaint
             else -> sideBtnPaint
         }
         canvas.drawRoundRect(handwritingBtnRect, sideCorner, sideCorner, zhPaint)
-        if (zhActive) {
-            canvas.drawRoundRect(handwritingBtnRect, sideCorner, sideCorner, activeBtnStrokePaint)
-        }
-        drawHandwritingButtonContent(canvas, handwritingBtnRect)
+        drawHandwritingButtonContent(canvas, handwritingBtnRect, isActive = zhActive)
 
         // Right column/pair: Backspace & Enter
         val bsPaint = if (idleTouchTarget == IdleTouchTarget.BACKSPACE) sideBtnPressedPaint else sideBtnPaint
@@ -838,71 +856,76 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         // Mic buttons: shrink height 104dp -> 52dp and scale mic icon + "AI" text proportionally.
         val micGlyphHeight = computeMicGlyphHeight(gemmaBtnRect, p)
         val micRadius = lerp(dp(26f), dp(18f), p)
-        val dotInset = lerp(dp(12f), dp(8f), p)
-        val dotRadius = lerp(dp(4f), dp(3f), p)
 
-        canvas.drawRoundRect(whisperBtnRect, micRadius, micRadius, whisperBtnPaint)
-        if (whisperLoaded) {
-            canvas.drawRoundRect(whisperBtnRect, micRadius, micRadius, activeBtnStrokePaint)
+        val whisperPressed = isRadialExpanded && activeSource == MicSource.WHISPER
+        val whisperBg = when {
+            whisperLoaded && whisperPressed -> micLoadedPressedPaint
+            whisperLoaded -> micLoadedPaint
+            whisperPressed -> micInactivePressedPaint
+            else -> micInactivePaint
         }
+        canvas.drawRoundRect(whisperBtnRect, micRadius, micRadius, whisperBg)
         drawScaledMicGlyph(
             canvas = canvas,
             cx = whisperBtnRect.centerX(),
             centerY = whisperBtnRect.centerY(),
             heightPx = micGlyphHeight,
-            strokePaint = whiteGlyphStrokePaint,
-            fillPaint = whiteGlyphFillPaint,
+            strokePaint = if (whisperLoaded) darkGlyphStrokePaint else lightGlyphStrokePaint,
+            fillPaint = if (whisperLoaded) darkGlyphFillPaint else lightGlyphFillPaint,
         )
-        if (whisperLoaded) {
-            canvas.drawCircle(whisperBtnRect.right - dotInset, whisperBtnRect.top + dotInset, dotRadius, loadedDotPaint)
-        }
 
-        canvas.drawRoundRect(gemmaBtnRect, micRadius, micRadius, gemmaBtnPaint)
-        if (gemmaLoaded) {
-            canvas.drawRoundRect(gemmaBtnRect, micRadius, micRadius, gemmaStrokePaint)
+        val gemmaPressed = isRadialExpanded && activeSource == MicSource.GEMMA
+        val gemmaBg = when {
+            gemmaLoaded && gemmaPressed -> micLoadedPressedPaint
+            gemmaLoaded -> micLoadedPaint
+            gemmaPressed -> micInactivePressedPaint
+            else -> micInactivePaint
         }
-        drawAiMicContent(canvas, gemmaBtnRect, micGlyphHeight, p)
-        if (gemmaLoaded) {
-            canvas.drawCircle(gemmaBtnRect.right - dotInset, gemmaBtnRect.top + dotInset, dotRadius, loadedDotPaint)
-        }
+        canvas.drawRoundRect(gemmaBtnRect, micRadius, micRadius, gemmaBg)
+        drawAiMicContent(canvas, gemmaBtnRect, micGlyphHeight, p, isLoaded = gemmaLoaded)
     }
 
-    private fun drawEnglishButtonContent(canvas: Canvas, rect: RectF) {
+    private fun drawEnglishButtonContent(canvas: Canvas, rect: RectF, isActive: Boolean) {
         val cx = rect.centerX()
         val cy = rect.centerY()
         val iconCy = cy - dp(7f)
-        drawCompactKeyboardIcon(canvas, cx, iconCy)
+        drawCompactKeyboardIcon(canvas, cx, iconCy, isActive)
 
+        leftBtnLabelPaint.color = if (isActive) PastelPalette.INK_ON_PASTEL else PastelPalette.TEXT_ON_DARK_SKY
         leftBtnLabelPaint.textSize = sp(11.5f)
         val textY = cy + dp(12f)
         canvas.drawText("En", cx, textY, leftBtnLabelPaint)
     }
 
-    private fun drawHandwritingButtonContent(canvas: Canvas, rect: RectF) {
+    private fun drawHandwritingButtonContent(canvas: Canvas, rect: RectF, isActive: Boolean) {
         val cx = rect.centerX()
         val cy = rect.centerY()
         val iconCy = cy - dp(7.5f)
-        drawPenIcon(canvas, cx, iconCy)
+        drawPenIcon(canvas, cx, iconCy, isActive)
 
+        leftBtnLabelPaint.color = if (isActive) PastelPalette.INK_ON_PASTEL else PastelPalette.TEXT_ON_DARK_SKY
         leftBtnLabelPaint.textSize = sp(11.5f)
         val textY = cy + dp(12.5f)
         canvas.drawText("中", cx, textY, leftBtnLabelPaint)
     }
 
-    private fun drawCompactKeyboardIcon(canvas: Canvas, cx: Float, cy: Float) {
+    private fun drawCompactKeyboardIcon(canvas: Canvas, cx: Float, cy: Float, isActive: Boolean) {
+        val stroke = if (isActive) iconDarkPaint else iconPaint
+        val fill = if (isActive) iconDarkFillPaint else iconFillPaint
         val w = dp(18f)
         val h = dp(11.5f)
         scratchRect.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f)
-        canvas.drawRoundRect(scratchRect, dp(2f), dp(2f), iconPaint)
+        canvas.drawRoundRect(scratchRect, dp(2f), dp(2f), stroke)
         val dotY = cy - dp(2f)
         for (dx in listOf(-dp(4.8f), 0f, dp(4.8f))) {
-            canvas.drawCircle(cx + dx, dotY, dp(1.0f), iconFillPaint)
+            canvas.drawCircle(cx + dx, dotY, dp(1.0f), fill)
         }
         val barY = cy + dp(2f)
-        canvas.drawLine(cx - dp(4f), barY, cx + dp(4f), barY, iconPaint)
+        canvas.drawLine(cx - dp(4f), barY, cx + dp(4f), barY, stroke)
     }
 
-    private fun drawPenIcon(canvas: Canvas, cx: Float, cy: Float) {
+    private fun drawPenIcon(canvas: Canvas, cx: Float, cy: Float, isActive: Boolean) {
+        val stroke = if (isActive) iconDarkPaint else iconPaint
         // Clean slanted fountain/stylus pen icon
         scratchPath.reset()
         val tipX = cx - dp(6.5f)
@@ -915,9 +938,9 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         scratchPath.lineTo(topX - dp(1.2f), topY - dp(1.2f))
         scratchPath.lineTo(tipX + dp(1.2f), tipY - dp(4.5f))
         scratchPath.close()
-        canvas.drawPath(scratchPath, iconPaint)
+        canvas.drawPath(scratchPath, stroke)
         // Pen tip nib line
-        canvas.drawLine(tipX, tipY, tipX + dp(2.2f), tipY - dp(2.2f), iconPaint)
+        canvas.drawLine(tipX, tipY, tipX + dp(2.2f), tipY - dp(2.2f), stroke)
     }
 
     private fun computeMicGlyphHeight(rect: RectF, expandP: Float): Float {
@@ -948,7 +971,13 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         return (glyphHeight * 0.5f).coerceAtLeast(0f)
     }
 
-    private fun drawAiMicContent(canvas: Canvas, rect: RectF, glyphHeight: Float, expandP: Float) {
+    private fun drawAiMicContent(
+        canvas: Canvas,
+        rect: RectF,
+        glyphHeight: Float,
+        expandP: Float,
+        isLoaded: Boolean,
+    ) {
         if (glyphHeight <= 0f) return
         val gap = lerp(dp(10f), dp(5f), expandP)
         val glyphWidthRatio = 12f / 16.5f
@@ -967,27 +996,16 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         val startX = rect.centerX() - totalWidth / 2f
         val centerY = rect.centerY()
 
-        val glyphShader = LinearGradient(
-            0f,
-            centerY - glyphHeight / 2f,
-            0f,
-            centerY + glyphHeight / 2f,
-            rainbowColors,
-            null,
-            Shader.TileMode.CLAMP,
-        )
-        rainbowGlyphStrokePaint.shader = glyphShader
-        rainbowGlyphFillPaint.shader = glyphShader
-
         drawScaledMicGlyph(
             canvas = canvas,
             cx = startX + glyphWidth / 2f,
             centerY = centerY,
             heightPx = glyphHeight,
-            strokePaint = rainbowGlyphStrokePaint,
-            fillPaint = rainbowGlyphFillPaint,
+            strokePaint = if (isLoaded) darkGlyphStrokePaint else lightGlyphStrokePaint,
+            fillPaint = if (isLoaded) darkGlyphFillPaint else lightGlyphFillPaint,
         )
 
+        aiTextPaint.color = if (isLoaded) PastelPalette.INK_ON_PASTEL else PastelPalette.TEXT_ON_DARK_SKY
         aiTextPaint.textSize = aiTextSize
         val textBounds = Rect()
         aiTextPaint.getTextBounds("AI", 0, 2, textBounds)
@@ -1036,10 +1054,10 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         val arrowX = cx - dp(5f)
         val shaftY = cy + dp(3f)
         val rightX = cx + dp(5.5f)
-        canvas.drawLine(rightX, cy - r, rightX, shaftY, iconPaint)
-        canvas.drawLine(rightX, shaftY, arrowX, shaftY, iconPaint)
-        canvas.drawLine(arrowX, shaftY, arrowX + dp(4.5f), shaftY - dp(4.5f), iconPaint)
-        canvas.drawLine(arrowX, shaftY, arrowX + dp(4.5f), shaftY + dp(4.5f), iconPaint)
+        canvas.drawLine(rightX, cy - r, rightX, shaftY, enterIconPaint)
+        canvas.drawLine(rightX, shaftY, arrowX, shaftY, enterIconPaint)
+        canvas.drawLine(arrowX, shaftY, arrowX + dp(4.5f), shaftY - dp(4.5f), enterIconPaint)
+        canvas.drawLine(arrowX, shaftY, arrowX + dp(4.5f), shaftY + dp(4.5f), enterIconPaint)
     }
 
     private fun dragActionsFor(source: MicSource): List<DragAppAction> =
@@ -1116,16 +1134,21 @@ class VoiceImeOverlayView @JvmOverloads constructor(
                 isDanger -> chipDangerPaint
                 else -> chipSelectedPaint
             }
-            canvas.drawRoundRect(rect, rect.height() / 2f, rect.height() / 2f, background)
-            val previousTextSize = sectorTextPaint.textSize
-            val maxTextWidth = rect.width() - dp(12f)
-            val textWidth = sectorTextPaint.measureText(action.label)
-            if (maxTextWidth > 0f && textWidth > maxTextWidth) {
-                sectorTextPaint.textSize = previousTextSize * (maxTextWidth / textWidth)
+            chipTextPaint.color = when {
+                !selected -> PastelPalette.TEXT_PRIMARY
+                isDanger -> PastelPalette.INK_ON_ROSE
+                else -> PastelPalette.INK_ON_PASTEL
             }
-            val cy = rect.centerY() - (sectorTextPaint.descent() + sectorTextPaint.ascent()) / 2f
-            canvas.drawText(action.label, rect.centerX(), cy, sectorTextPaint)
-            sectorTextPaint.textSize = previousTextSize
+            canvas.drawRoundRect(rect, rect.height() / 2f, rect.height() / 2f, background)
+            val previousTextSize = chipTextPaint.textSize
+            val maxTextWidth = rect.width() - dp(12f)
+            val textWidth = chipTextPaint.measureText(action.label)
+            if (maxTextWidth > 0f && textWidth > maxTextWidth) {
+                chipTextPaint.textSize = previousTextSize * (maxTextWidth / textWidth)
+            }
+            val cy = rect.centerY() - (chipTextPaint.descent() + chipTextPaint.ascent()) / 2f
+            canvas.drawText(action.label, rect.centerX(), cy, chipTextPaint)
+            chipTextPaint.textSize = previousTextSize
         }
 
         val selected = selectedTrayAction
@@ -1202,7 +1225,6 @@ class VoiceImeOverlayView @JvmOverloads constructor(
             canvas.drawPath(centerPath, centerHighlightPaint)
         }
 
-        canvas.drawPath(basePath, discBorderPaint)
         scratchRect.set(anchorX - innerR, anchorY - innerR, anchorX + innerR, anchorY + innerR)
         canvas.drawArc(scratchRect, 180f, 180f, false, dividerPaint)
 
@@ -1242,10 +1264,19 @@ class VoiceImeOverlayView @JvmOverloads constructor(
 
         val knobX = pointerX.coerceIn(dp(12f), (width - dp(12f)).coerceAtLeast(dp(12f)))
         val knobY = pointerY.coerceIn(dp(12f), (height - dp(12f)).coerceAtLeast(dp(12f)))
+        val isDangerState = (isTrayTargeted && (
+            selectedTrayAction == DragAppAction.UNLOAD_WHISPER ||
+                selectedTrayAction == DragAppAction.UNLOAD_GEMMA
+            )) || (!isTrayTargeted && currentAction == RadialAction.CANCEL)
+        amplitudeRingPaint.color = if (isDangerState) {
+            PastelPalette.AMPLITUDE_RING_CANCEL
+        } else {
+            PastelPalette.AMPLITUDE_RING
+        }
         val pulseR = knobRadiusPx + dp(6f) + voiceAmplitude * dp(18f)
         canvas.drawCircle(knobX, knobY, pulseR, amplitudeRingPaint)
         canvas.drawCircle(knobX, knobY, knobRadiusPx, knobFillPaint(source))
-        drawMicIcon(canvas, knobX, knobY, source == MicSource.GEMMA)
+        drawMicIcon(canvas, knobX, knobY, source == MicSource.GEMMA, isDanger = isDangerState)
     }
 
     private fun drawRingSector(
@@ -1546,7 +1577,9 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         canvas.drawLine(crossCenterX - r, cy + r, crossCenterX + r, cy - r, iconPaint)
     }
 
-    private fun drawMicIcon(canvas: Canvas, cx: Float, cy: Float, sparkle: Boolean) {
+    private fun drawMicIcon(canvas: Canvas, cx: Float, cy: Float, sparkle: Boolean, isDanger: Boolean = false) {
+        val stroke = if (isDanger) roseIconPaint else iconDarkPaint
+        val fill = if (isDanger) roseIconFillPaint else iconDarkFillPaint
         val capsuleW = dp(6f)
         val capsuleH = dp(10f)
         scratchRect.set(
@@ -1555,18 +1588,18 @@ class VoiceImeOverlayView @JvmOverloads constructor(
             cx + capsuleW / 2f,
             cy + capsuleH / 2f - dp(2f),
         )
-        canvas.drawRoundRect(scratchRect, capsuleW / 2f, capsuleW / 2f, iconFillPaint)
+        canvas.drawRoundRect(scratchRect, capsuleW / 2f, capsuleW / 2f, fill)
 
         scratchRect.set(cx - dp(6f), cy - dp(5f), cx + dp(6f), cy + dp(6f))
-        canvas.drawArc(scratchRect, 0f, 180f, false, iconPaint)
-        canvas.drawLine(cx, cy + dp(6f), cx, cy + dp(9.5f), iconPaint)
-        canvas.drawLine(cx - dp(3.5f), cy + dp(9.5f), cx + dp(3.5f), cy + dp(9.5f), iconPaint)
+        canvas.drawArc(scratchRect, 0f, 180f, false, stroke)
+        canvas.drawLine(cx, cy + dp(6f), cx, cy + dp(9.5f), stroke)
+        canvas.drawLine(cx - dp(3.5f), cy + dp(9.5f), cx + dp(3.5f), cy + dp(9.5f), stroke)
 
         if (sparkle) {
             val sx = cx + dp(7.5f)
             val sy = cy - dp(7.5f)
-            canvas.drawLine(sx - dp(2.2f), sy, sx + dp(2.2f), sy, iconPaint)
-            canvas.drawLine(sx, sy - dp(2.2f), sx, sy + dp(2.2f), iconPaint)
+            canvas.drawLine(sx - dp(2.2f), sy, sx + dp(2.2f), sy, stroke)
+            canvas.drawLine(sx, sy - dp(2.2f), sx, sy + dp(2.2f), stroke)
         }
     }
 

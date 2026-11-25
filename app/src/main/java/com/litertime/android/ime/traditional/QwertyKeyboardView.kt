@@ -3,7 +3,6 @@ package com.litertime.android.ime.traditional
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -16,6 +15,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import com.litertime.android.settings.ImeSettings
+import com.litertime.android.ui.PastelPalette
 
 /**
  * High-performance custom Canvas view rendering FlorisBoard's QWERTY, Symbols (`?123`), and
@@ -70,73 +70,95 @@ class QwertyKeyboardView(context: Context) : View(context) {
     }
 
     private val bgPaint = Paint().apply {
-        color = 0xFF1A1D24.toInt()
+        color = PastelPalette.BG_CANVAS
         style = Paint.Style.FILL
     }
     private val charKeyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF2B313D.toInt()
+        color = PastelPalette.SURFACE_CHAR_KEY
         style = Paint.Style.FILL
     }
     private val modKeyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF222731.toInt()
+        color = PastelPalette.SURFACE_MOD_KEY
         style = Paint.Style.FILL
     }
     private val enterKeyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF2563EB.toInt()
+        color = PastelPalette.PINK_LIGHT
+        style = Paint.Style.FILL
+    }
+    private val enterKeyPressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.PINK_PRESSED
         style = Paint.Style.FILL
     }
     private val pressedKeyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF3E4759.toInt()
+        color = PastelPalette.SURFACE_KEY_PRESSED
         style = Paint.Style.FILL
     }
     private val shiftActivePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF374A6D.toInt()
+        color = PastelPalette.SURFACE_SHIFT_ACTIVE
         style = Paint.Style.FILL
     }
-    private val capsLockUnderlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF60A5FA.toInt()
+    private val capsLockBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.SKY_BLUE
+        style = Paint.Style.FILL
+    }
+    private val capsLockPressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.SKY_BLUE_PRESSED
         style = Paint.Style.FILL
     }
     private val charTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textSize = sp(18.5f)
+        color = PastelPalette.TEXT_PRIMARY
+        textSize = sp(19f)
+        typeface = Typeface.create("sans-serif", Typeface.NORMAL)
         textAlign = Paint.Align.CENTER
     }
     private val modTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFE5E7EB.toInt()
-        textSize = sp(14f)
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        color = PastelPalette.TEXT_MOD_KEY
+        textSize = sp(13.5f)
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        textAlign = Paint.Align.CENTER
+    }
+    private val enterTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.INK_ON_PINK
+        textSize = sp(13.5f)
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         textAlign = Paint.Align.CENTER
     }
     private val spaceTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x99FFFFFF.toInt()
-        textSize = sp(12.5f)
+        color = PastelPalette.TEXT_MUTED
+        textSize = sp(12f)
+        typeface = Typeface.create("sans-serif", Typeface.NORMAL)
         textAlign = Paint.Align.CENTER
     }
     private val iconStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = PastelPalette.TEXT_ON_DARK_SKY
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1.65f)
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val shiftActiveIconFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.TEXT_PRIMARY
+        style = Paint.Style.FILL
+    }
+    private val capsLockIconFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.INK_ON_PASTEL
+        style = Paint.Style.FILL
+    }
+    private val enterIconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.INK_ON_PINK
         style = Paint.Style.STROKE
         strokeWidth = dp(1.8f)
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
-    private val iconFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        style = Paint.Style.FILL
-    }
     private val popupBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF3A4354.toInt()
+        color = PastelPalette.SURFACE_POPUP
         style = Paint.Style.FILL
-    }
-    private val popupBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x44FFFFFF
-        style = Paint.Style.STROKE
-        strokeWidth = dp(1f)
     }
     private val popupTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textSize = sp(24f)
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        color = PastelPalette.TEXT_PRIMARY
+        textSize = sp(23f)
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         textAlign = Paint.Align.CENTER
     }
 
@@ -214,11 +236,11 @@ class QwertyKeyboardView(context: Context) : View(context) {
             return
         }
 
-        val outerPadH = dp(4f)
-        val outerPadTop = dp(6f)
-        val outerPadBottom = dp(6f)
-        val rowGap = dp(6f)
-        val keyGap = dp(5f)
+        val outerPadH = dp(6f)
+        val outerPadTop = dp(5f)
+        val outerPadBottom = dp(7f)
+        val rowGap = dp(7f)
+        val keyGap = dp(5.5f)
 
         val usableH = (h - outerPadTop - outerPadBottom - rowGap * (rows.size - 1)).coerceAtLeast(dp(40f))
         val rowH = usableH / rows.size
@@ -251,15 +273,19 @@ class QwertyKeyboardView(context: Context) : View(context) {
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
 
         val pressedIds = activePointers.values.map { it.spec.id }.toSet()
-        val cornerR = dp(6f)
+        val cornerR = dp(8.5f)
 
         for (kr in keyRects) {
             val isPressed = kr.spec.id in pressedIds
             val fillPaint = when {
-                isPressed -> pressedKeyPaint
-                kr.spec.kind == EnglishKeyboardLayout.KeyKind.ENTER -> enterKeyPaint
+                kr.spec.kind == EnglishKeyboardLayout.KeyKind.ENTER ->
+                    if (isPressed) enterKeyPressedPaint else enterKeyPaint
                 kr.spec.kind == EnglishKeyboardLayout.KeyKind.SHIFT &&
-                    shiftState != EnglishKeyboardLayout.ShiftState.UNSHIFTED -> shiftActivePaint
+                    shiftState == EnglishKeyboardLayout.ShiftState.CAPS_LOCK ->
+                    if (isPressed) capsLockPressedPaint else capsLockBgPaint
+                isPressed -> pressedKeyPaint
+                kr.spec.kind == EnglishKeyboardLayout.KeyKind.SHIFT &&
+                    shiftState == EnglishKeyboardLayout.ShiftState.SHIFTED -> shiftActivePaint
                 kr.spec.kind == EnglishKeyboardLayout.KeyKind.CHARACTER ||
                     kr.spec.kind == EnglishKeyboardLayout.KeyKind.SPACE -> charKeyPaint
                 else -> modKeyPaint
@@ -269,6 +295,14 @@ class QwertyKeyboardView(context: Context) : View(context) {
             when (kr.spec.kind) {
                 EnglishKeyboardLayout.KeyKind.SHIFT -> drawShiftIcon(canvas, kr.rect)
                 EnglishKeyboardLayout.KeyKind.BACKSPACE -> drawBackspaceIcon(canvas, kr.rect)
+                EnglishKeyboardLayout.KeyKind.ENTER -> {
+                    if (kr.spec.label == "↵") {
+                        drawEnterIcon(canvas, kr.rect)
+                    } else {
+                        val y = kr.rect.centerY() - (enterTextPaint.descent() + enterTextPaint.ascent()) / 2f
+                        canvas.drawText(kr.spec.label, kr.rect.centerX(), y, enterTextPaint)
+                    }
+                }
                 EnglishKeyboardLayout.KeyKind.SPACE -> {
                     val y = kr.rect.centerY() - (spaceTextPaint.descent() + spaceTextPaint.ascent()) / 2f
                     canvas.drawText(kr.spec.label, kr.rect.centerX(), y, spaceTextPaint)
@@ -303,8 +337,7 @@ class QwertyKeyboardView(context: Context) : View(context) {
         val bottom = top + popH
 
         scratchRect.set(cx - popW / 2f, top, cx + popW / 2f, bottom)
-        canvas.drawRoundRect(scratchRect, dp(8f), dp(8f), popupBgPaint)
-        canvas.drawRoundRect(scratchRect, dp(8f), dp(8f), popupBorderPaint)
+        canvas.drawRoundRect(scratchRect, dp(10f), dp(10f), popupBgPaint)
         val textY = scratchRect.centerY() - (popupTextPaint.descent() + popupTextPaint.ascent()) / 2f
         canvas.drawText(kr.spec.label, cx, textY, popupTextPaint)
     }
@@ -328,16 +361,28 @@ class QwertyKeyboardView(context: Context) : View(context) {
         scratchPath.lineTo(cx - halfW, shoulderY)
         scratchPath.close()
 
-        if (shiftState == EnglishKeyboardLayout.ShiftState.UNSHIFTED) {
-            canvas.drawPath(scratchPath, iconStrokePaint)
-        } else {
-            canvas.drawPath(scratchPath, iconFillPaint)
+        when (shiftState) {
+            EnglishKeyboardLayout.ShiftState.UNSHIFTED -> canvas.drawPath(scratchPath, iconStrokePaint)
+            EnglishKeyboardLayout.ShiftState.SHIFTED -> canvas.drawPath(scratchPath, shiftActiveIconFillPaint)
+            EnglishKeyboardLayout.ShiftState.CAPS_LOCK -> {
+                canvas.drawPath(scratchPath, capsLockIconFillPaint)
+                scratchRect.set(cx - dp(6f), bottomY + dp(2.5f), cx + dp(6f), bottomY + dp(4.5f))
+                canvas.drawRoundRect(scratchRect, dp(1f), dp(1f), capsLockIconFillPaint)
+            }
         }
+    }
 
-        if (shiftState == EnglishKeyboardLayout.ShiftState.CAPS_LOCK) {
-            scratchRect.set(cx - dp(6f), bottomY + dp(2.5f), cx + dp(6f), bottomY + dp(4.5f))
-            canvas.drawRoundRect(scratchRect, dp(1f), dp(1f), capsLockUnderlinePaint)
-        }
+    private fun drawEnterIcon(canvas: Canvas, rect: RectF) {
+        val cx = rect.centerX()
+        val cy = rect.centerY()
+        val topY = cy - dp(5.5f)
+        val shaftY = cy + dp(2.5f)
+        val rightX = cx + dp(6.5f)
+        val arrowX = cx - dp(6f)
+        canvas.drawLine(rightX, topY, rightX, shaftY, enterIconPaint)
+        canvas.drawLine(rightX, shaftY, arrowX, shaftY, enterIconPaint)
+        canvas.drawLine(arrowX, shaftY, arrowX + dp(4.2f), shaftY - dp(4.2f), enterIconPaint)
+        canvas.drawLine(arrowX, shaftY, arrowX + dp(4.2f), shaftY + dp(4.2f), enterIconPaint)
     }
 
     private fun drawBackspaceIcon(canvas: Canvas, rect: RectF) {

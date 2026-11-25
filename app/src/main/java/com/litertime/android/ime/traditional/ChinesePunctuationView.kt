@@ -2,9 +2,9 @@ package com.litertime.android.ime.traditional
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.os.Handler
 import android.os.Looper
 import android.util.TypedValue
@@ -17,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.litertime.android.ui.PastelPalette
 
 /**
  * Scrollable Chinese punctuation picker displayed inside the handwriting panel when tapping `[标点]`.
@@ -51,7 +52,7 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
 
     init {
         orientation = VERTICAL
-        setBackgroundColor(0xFF1A1D24.toInt())
+        setBackgroundColor(PastelPalette.BG_CANVAS)
 
         val recyclerView = RecyclerView(context).apply {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f)
@@ -72,11 +73,11 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
 
         val backBtn = TextView(context).apply {
             text = "手写"
-            setTextColor(Color.WHITE)
+            setTextColor(PastelPalette.TEXT_ON_DARK_SKY)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             gravity = Gravity.CENTER
-            background = keyBackground(0xFF282D38.toInt(), dpF(8f))
+            background = keyStateBackground(PastelPalette.SURFACE_MOD_KEY, PastelPalette.SURFACE_PRESSED, dpF(8.5f))
             setPadding(dp(14f), 0, dp(14f), 0)
             layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT)
             setOnClickListener {
@@ -88,7 +89,7 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
 
         val titleView = TextView(context).apply {
             text = "中文标点"
-            setTextColor(0xAAFFFFFF.toInt())
+            setTextColor(PastelPalette.TEXT_MUTED)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             gravity = Gravity.CENTER
             layoutParams = LayoutParams(0, LayoutParams.MATCH_PARENT, 1f)
@@ -97,10 +98,10 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
 
         val backspaceBtn = TextView(context).apply {
             text = "⌫"
-            setTextColor(Color.WHITE)
+            setTextColor(PastelPalette.TEXT_ON_DARK_SKY)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             gravity = Gravity.CENTER
-            background = keyBackground(0xFF282D38.toInt(), dpF(8f))
+            background = keyBackground(PastelPalette.SURFACE_MOD_KEY, dpF(8.5f))
             layoutParams = LayoutParams(dp(58f), LayoutParams.MATCH_PARENT)
             setOnTouchListener { v, ev -> handleBackspaceTouch(v, ev) }
         }
@@ -116,7 +117,7 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 backspaceHeld = true
-                v.background = keyBackground(0xFF3E4759.toInt(), dpF(8f))
+                v.background = keyBackground(PastelPalette.SURFACE_PRESSED, dpF(8.5f))
                 triggerHaptic()
                 listener?.onBackspaceClick()
                 mainHandler.removeCallbacks(backspaceRepeatRunnable)
@@ -126,7 +127,7 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 backspaceHeld = false
                 mainHandler.removeCallbacks(backspaceRepeatRunnable)
-                v.background = keyBackground(0xFF282D38.toInt(), dpF(8f))
+                v.background = keyBackground(PastelPalette.SURFACE_MOD_KEY, dpF(8.5f))
                 return true
             }
         }
@@ -138,6 +139,12 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
             performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         }
     }
+
+    private fun keyStateBackground(normalColor: Int, pressedColor: Int, radiusPx: Float): StateListDrawable =
+        StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), keyBackground(pressedColor, radiusPx))
+            addState(intArrayOf(), keyBackground(normalColor, radiusPx))
+        }
 
     private fun keyBackground(fillColor: Int, radiusPx: Float): GradientDrawable =
         GradientDrawable().apply {
@@ -151,10 +158,10 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
             val tv = TextView(parent.context).apply {
-                setTextColor(Color.WHITE)
+                setTextColor(PastelPalette.TEXT_PRIMARY)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
                 gravity = Gravity.CENTER
-                background = keyBackground(0xFF2B313D.toInt(), dpF(8f))
+                background = keyStateBackground(PastelPalette.SURFACE_CHAR_KEY, PastelPalette.SURFACE_KEY_PRESSED, dpF(8.5f))
                 layoutParams = RecyclerView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     dp(42f),

@@ -2,9 +2,9 @@ package com.litertime.android.handwriting
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -19,6 +19,7 @@ import android.widget.TextView
 import com.litertime.android.ime.traditional.ChinesePunctuationView
 import com.litertime.android.ime.traditional.EmojiPickerView
 import com.litertime.android.settings.ImeSettings
+import com.litertime.android.ui.PastelPalette
 import java.util.concurrent.Executors
 
 /**
@@ -80,7 +81,7 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
     private val autoCommitRunnable = Runnable { onAutoCommitTimerFired() }
 
     init {
-        setBackgroundColor(0xFF1A1D24.toInt())
+        setBackgroundColor(PastelPalette.BG_CANVAS)
 
         // 1. Main writing layout
         mainContent = LinearLayout(context).apply {
@@ -150,18 +151,18 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
         }
 
         bottomToolbar.addView(
-            createToolbarButton(label = "标点", widthDp = 50f, weight = 0f, isAccent = false) {
+            createToolbarButton(label = "标点", widthDp = 50f, weight = 0f, isModifier = true) {
                 showSubView(SubView.PUNCTUATION)
             },
         )
         bottomToolbar.addView(
-            createToolbarButton(label = "😊", widthDp = 42f, weight = 0f, isAccent = false) {
+            createToolbarButton(label = "😊", widthDp = 42f, weight = 0f, isModifier = true) {
                 showSubView(SubView.EMOJI)
             },
         )
         listOf("，", "。", "！", "？").forEach { punct ->
             bottomToolbar.addView(
-                createToolbarButton(label = punct, widthDp = 0f, weight = 1f, isAccent = false) {
+                createToolbarButton(label = punct, widthDp = 0f, weight = 1f, isModifier = false) {
                     commitWithPendingFlush(punct)
                 },
             )
@@ -171,7 +172,8 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
                 label = "空格",
                 widthDp = 0f,
                 weight = 1.45f,
-                isAccent = false,
+                isModifier = false,
+                isMutedText = true,
                 marginEndDp = 0f,
             ) {
                 commitWithPendingFlush(" ")
@@ -400,7 +402,7 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
             }
             val tv = TextView(context).apply {
                 text = hint
-                setTextColor(0x88FFFFFF.toInt())
+                setTextColor(PastelPalette.TEXT_MUTED)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(4f), 0, dp(4f), 0)
@@ -413,10 +415,10 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
             val highlightFirst = index == 0 && settings.handwritingAutoCommitFirst
             val chip = TextView(context).apply {
                 text = item.text
-                setTextColor(Color.WHITE)
+                setTextColor(if (highlightFirst) PastelPalette.INK_ON_PASTEL else PastelPalette.TEXT_PRIMARY)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
                 typeface = if (index == 0) {
-                    Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    Typeface.create("sans-serif-medium", Typeface.BOLD)
                 } else {
                     Typeface.DEFAULT
                 }
@@ -424,9 +426,9 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
                 minWidth = dp(42f)
                 setPadding(dp(12f), 0, dp(12f), 0)
                 background = if (highlightFirst) {
-                    pillBackground(0xFF263B5E.toInt(), strokeColor = 0xFF60A5FA.toInt())
+                    pillStateBackground(PastelPalette.SKY_BLUE, PastelPalette.SKY_BLUE_PRESSED)
                 } else {
-                    pillBackground(0xFF282D38.toInt())
+                    pillStateBackground(PastelPalette.SURFACE_CHAR_KEY, PastelPalette.SURFACE_KEY_PRESSED)
                 }
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -469,17 +471,25 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
         label: String,
         widthDp: Float,
         weight: Float,
-        isAccent: Boolean,
+        isModifier: Boolean,
+        isMutedText: Boolean = false,
         marginEndDp: Float = 6f,
         onClick: () -> Unit,
     ): TextView {
+        val normalColor = if (isModifier) PastelPalette.SURFACE_MOD_KEY else PastelPalette.SURFACE_CHAR_KEY
+        val pressedColor = if (isModifier) PastelPalette.SURFACE_PRESSED else PastelPalette.SURFACE_KEY_PRESSED
+        val textColor = when {
+            isModifier -> PastelPalette.TEXT_MOD_KEY
+            isMutedText -> PastelPalette.TEXT_MOD_KEY
+            else -> PastelPalette.TEXT_PRIMARY
+        }
         return TextView(context).apply {
             text = label
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (label.length > 1) 14f else 17f)
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            setTextColor(textColor)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (label.length > 1) 13.5f else 17f)
+            typeface = Typeface.create("sans-serif-medium", if (isModifier || isMutedText) Typeface.NORMAL else Typeface.BOLD)
             gravity = Gravity.CENTER
-            background = pillBackground(if (isAccent) 0xFF2563EB.toInt() else 0xFF2B313D.toInt())
+            background = pillStateBackground(normalColor, pressedColor)
             layoutParams = LinearLayout.LayoutParams(
                 if (weight > 0f) 0 else dp(widthDp),
                 dp(38f),
@@ -502,14 +512,17 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
         }
     }
 
-    private fun pillBackground(fillColor: Int, strokeColor: Int? = null): GradientDrawable =
+    private fun pillStateBackground(normalColor: Int, pressedColor: Int): StateListDrawable =
+        StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), pillBackground(pressedColor))
+            addState(intArrayOf(), pillBackground(normalColor))
+        }
+
+    private fun pillBackground(fillColor: Int): GradientDrawable =
         GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadius = dpF(8f)
+            cornerRadius = dpF(8.5f)
             setColor(fillColor)
-            if (strokeColor != null) {
-                setStroke(dp(1f).coerceAtLeast(1), strokeColor)
-            }
         }
 
     companion object {

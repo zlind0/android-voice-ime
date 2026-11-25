@@ -12,16 +12,21 @@ import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,6 +35,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -49,39 +55,47 @@ import androidx.compose.material.icons.rounded.Screenshot
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -150,6 +164,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(PastelPalette.BG_CANVAS),
+            navigationBarStyle = SystemBarStyle.dark(PastelPalette.BG_CANVAS),
+        )
         val app = application as LiteRtImeApp
         inferenceClient = InferenceClient(this)
         inferenceClient.addListener(playgroundListener)
@@ -157,7 +175,7 @@ class MainActivity : ComponentActivity() {
         modelDownloader = ModelDownloader(app.modelStorage)
 
         setContent {
-            MaterialTheme {
+            LiteRtPastelTheme {
                 LiteRtImeSettingsScreen(
                     app = app,
                     inferenceClient = inferenceClient,
@@ -526,6 +544,12 @@ private fun LiteRtImeSettingsScreen(
         topBar = {
             TopAppBar(
                 title = { Text(currentPage.title) },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    navigationIconContentColor = Color.White,
+                ),
                 navigationIcon = {
                     if (currentPage != SettingsPage.HOME) {
                         IconButton(onClick = { currentPage = SettingsPage.HOME }) {
@@ -626,7 +650,7 @@ private fun LiteRtImeSettingsScreen(
                         }
                     },
                 )
-                HorizontalDivider()
+                PastelDivider()
                 PermissionRow(
                     icon = { Icon(Icons.Rounded.Mic, contentDescription = null) },
                     title = "麦克风录音权限",
@@ -637,7 +661,7 @@ private fun LiteRtImeSettingsScreen(
                     onAction = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) },
                 )
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    HorizontalDivider()
+                    PastelDivider()
                     PermissionRow(
                         icon = { Icon(Icons.Rounded.Memory, contentDescription = null) },
                         title = "通知栏常驻权限",
@@ -648,7 +672,7 @@ private fun LiteRtImeSettingsScreen(
                         onAction = { notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
                     )
                 }
-                HorizontalDivider()
+                PastelDivider()
                 PermissionRow(
                     icon = { Icon(Icons.Rounded.Screenshot, contentDescription = null) },
                     title = "无障碍截屏服务",
@@ -678,7 +702,7 @@ private fun LiteRtImeSettingsScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    FilterChip(
+                    PastelFilterChip(
                         selected = storageConfig.mode == StorageMode.APP,
                         onClick = {
                             storage.setAppStorageMode()
@@ -688,7 +712,7 @@ private fun LiteRtImeSettingsScreen(
                         },
                         label = { Text("应用私有存储") },
                     )
-                    FilterChip(
+                    PastelFilterChip(
                         selected = storageConfig.mode == StorageMode.ANDROID,
                         onClick = {
                             if (!hasAllFilesAccess) {
@@ -726,7 +750,7 @@ private fun LiteRtImeSettingsScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    OutlinedButton(
+                    PastelTonalButton(
                         onClick = { openAllFilesPermission(context) },
                         modifier = Modifier.weight(1f),
                     ) {
@@ -803,13 +827,13 @@ private fun LiteRtImeSettingsScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    OutlinedButton(
+                    PastelTonalButton(
                         onClick = { inferenceClient.preloadModel("ASR", settings.activeAsrModelId) },
                         modifier = Modifier.weight(1f),
                     ) {
                         Text("预加载 Whisper")
                     }
-                    OutlinedButton(
+                    PastelTonalButton(
                         onClick = { inferenceClient.preloadModel("LLM", settings.activeLlmModelId) },
                         modifier = Modifier.weight(1f),
                     ) {
@@ -831,7 +855,7 @@ private fun LiteRtImeSettingsScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     DownloadMirror.entries.forEach { mirror ->
-                        FilterChip(
+                        PastelFilterChip(
                             selected = settings.downloadMirror == mirror,
                             onClick = {
                                 settings = settingsStore.update { it.copy(downloadMirror = mirror) }
@@ -841,7 +865,7 @@ private fun LiteRtImeSettingsScreen(
                     }
                 }
 
-                HorizontalDivider()
+                PastelDivider()
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -859,7 +883,7 @@ private fun LiteRtImeSettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Switch(
+                    PastelSwitch(
                         checked = settings.useGpuForLlm,
                         onCheckedChange = { checked ->
                             settings = settingsStore.update { it.copy(useGpuForLlm = checked) }
@@ -877,7 +901,7 @@ private fun LiteRtImeSettingsScreen(
                     }
                 }
 
-                HorizontalDivider()
+                PastelDivider()
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -895,7 +919,7 @@ private fun LiteRtImeSettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Switch(
+                    PastelSwitch(
                         checked = settings.voiceCascadeEnabled,
                         onCheckedChange = { checked ->
                             settings = settingsStore.update { it.copy(voiceCascadeEnabled = checked) }
@@ -920,7 +944,7 @@ private fun LiteRtImeSettingsScreen(
                     )
                 }
 
-                HorizontalDivider()
+                PastelDivider()
                 Text("端侧 Gemma 4 多模态模型", style = MaterialTheme.typography.titleSmall)
                 ModelCatalog.llmModels.forEach { spec ->
                     val installed = storage.isLlmInstalled(spec)
@@ -930,6 +954,7 @@ private fun LiteRtImeSettingsScreen(
                         subtitle = "${formatBytes(spec.expectedSizeBytes)} · ${spec.description}",
                         selected = settings.activeLlmModelId == spec.id,
                         installed = installed,
+                        loaded = inferenceState.llmLoaded && inferenceState.llmModelId == spec.id,
                         downloadState = dlState,
                         onSelect = {
                             settings = settingsStore.update { it.copy(activeLlmModelId = spec.id) }
@@ -948,14 +973,14 @@ private fun LiteRtImeSettingsScreen(
                     )
                 }
 
-                HorizontalDivider()
+                PastelDivider()
                 Text("Whisper / ASR 语音识别模型", style = MaterialTheme.typography.titleSmall)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     listOf("" to "自动语言", "zh" to "中文", "en" to "English").forEach { (code, label) ->
-                        FilterChip(
+                        PastelFilterChip(
                             selected = settings.whisperLanguage == code,
                             onClick = {
                                 settings = settingsStore.update { it.copy(whisperLanguage = code) }
@@ -972,6 +997,7 @@ private fun LiteRtImeSettingsScreen(
                         subtitle = "${formatBytes(spec.totalApproxBytes)} · ${spec.languageSummary}",
                         selected = settings.activeAsrModelId == spec.id,
                         installed = installed,
+                        loaded = inferenceState.asrLoaded && inferenceState.asrModelId == spec.id,
                         downloadState = dlState,
                         onSelect = {
                             settings = settingsStore.update { it.copy(activeAsrModelId = spec.id) }
@@ -1000,7 +1026,7 @@ private fun LiteRtImeSettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                HorizontalDivider()
+                PastelDivider()
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1014,7 +1040,7 @@ private fun LiteRtImeSettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Switch(
+                    PastelSwitch(
                         checked = settings.stripTrailingPeriod,
                         onCheckedChange = { checked ->
                             settings = settingsStore.update {
@@ -1057,7 +1083,7 @@ private fun LiteRtImeSettingsScreen(
                             ImeSettings.MIN_HANDWRITING_FADE_DELAY_MS) / 100 - 1,
                     )
 
-                    HorizontalDivider()
+                    PastelDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1071,7 +1097,7 @@ private fun LiteRtImeSettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(
+                        PastelSwitch(
                             checked = settings.handwritingAutoCommitFirst,
                             onCheckedChange = { checked ->
                                 settings = settingsStore.update { it.copy(handwritingAutoCommitFirst = checked) }
@@ -1079,7 +1105,7 @@ private fun LiteRtImeSettingsScreen(
                         )
                     }
 
-                    HorizontalDivider()
+                    PastelDivider()
                     Text(
                         text = String.format(Locale.US, "笔迹粗细：%.1f dp", settings.handwritingStrokeWidthDp),
                         style = MaterialTheme.typography.bodyMedium,
@@ -1097,14 +1123,14 @@ private fun LiteRtImeSettingsScreen(
                             ImeSettings.MAX_HANDWRITING_STROKE_WIDTH_DP,
                     )
 
-                    HorizontalDivider()
+                    PastelDivider()
                     Text("笔迹颜色", style = MaterialTheme.typography.bodyMedium)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         HandwritingInkColor.entries.forEach { ink ->
-                            FilterChip(
+                            PastelFilterChip(
                                 selected = settings.handwritingInkColor == ink,
                                 onClick = {
                                     settings = settingsStore.update { it.copy(handwritingInkColor = ink) }
@@ -1114,7 +1140,7 @@ private fun LiteRtImeSettingsScreen(
                         }
                     }
 
-                    HorizontalDivider()
+                    PastelDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1128,7 +1154,7 @@ private fun LiteRtImeSettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(
+                        PastelSwitch(
                             checked = settings.handwritingShowGrid,
                             onCheckedChange = { checked ->
                                 settings = settingsStore.update { it.copy(handwritingShowGrid = checked) }
@@ -1136,7 +1162,7 @@ private fun LiteRtImeSettingsScreen(
                         )
                     }
 
-                    HorizontalDivider()
+                    PastelDivider()
                     Text(
                         text = "手写板高度：${settings.handwritingPanelHeightDp} dp",
                         style = MaterialTheme.typography.bodyMedium,
@@ -1177,7 +1203,7 @@ private fun LiteRtImeSettingsScreen(
                             ImeSettings.MIN_KEYBOARD_HEIGHT_DP) / 10 - 1,
                     )
 
-                    HorizontalDivider()
+                    PastelDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1191,7 +1217,7 @@ private fun LiteRtImeSettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(
+                        PastelSwitch(
                             checked = settings.keyboardShowNumberRow,
                             onCheckedChange = { checked ->
                                 settings = settingsStore.update { it.copy(keyboardShowNumberRow = checked) }
@@ -1199,7 +1225,7 @@ private fun LiteRtImeSettingsScreen(
                         )
                     }
 
-                    HorizontalDivider()
+                    PastelDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1213,7 +1239,7 @@ private fun LiteRtImeSettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(
+                        PastelSwitch(
                             checked = settings.keyboardHapticEnabled,
                             onCheckedChange = { checked ->
                                 settings = settingsStore.update { it.copy(keyboardHapticEnabled = checked) }
@@ -1221,7 +1247,7 @@ private fun LiteRtImeSettingsScreen(
                         )
                     }
 
-                    HorizontalDivider()
+                    PastelDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1235,7 +1261,7 @@ private fun LiteRtImeSettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(
+                        PastelSwitch(
                             checked = settings.keyboardKeyPopupEnabled,
                             onCheckedChange = { checked ->
                                 settings = settingsStore.update { it.copy(keyboardKeyPopupEnabled = checked) }
@@ -1243,7 +1269,7 @@ private fun LiteRtImeSettingsScreen(
                         )
                     }
 
-                    HorizontalDivider()
+                    PastelDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1257,7 +1283,7 @@ private fun LiteRtImeSettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(
+                        PastelSwitch(
                             checked = settings.keyboardAutoCapsEnabled,
                             onCheckedChange = { checked ->
                                 settings = settingsStore.update { it.copy(keyboardAutoCapsEnabled = checked) }
@@ -1265,7 +1291,7 @@ private fun LiteRtImeSettingsScreen(
                         )
                     }
 
-                    HorizontalDivider()
+                    PastelDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1279,7 +1305,7 @@ private fun LiteRtImeSettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(
+                        PastelSwitch(
                             checked = settings.keyboardDoubleSpacePeriod,
                             onCheckedChange = { checked ->
                                 settings = settingsStore.update { it.copy(keyboardDoubleSpacePeriod = checked) }
@@ -1392,7 +1418,7 @@ private fun LiteRtImeSettingsScreen(
                     }
                 }
 
-                HorizontalDivider()
+                PastelDivider()
                 Text("各模式 User Prompt", style = MaterialTheme.typography.titleSmall)
                 Text(
                     text = if (settings.voiceCascadeEnabled) {
@@ -1469,7 +1495,7 @@ private fun LiteRtImeSettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Switch(
+                    PastelSwitch(
                         checked = settings.debugRequestLoggingEnabled,
                         onCheckedChange = { checked ->
                             settings = settingsStore.update {
@@ -1494,7 +1520,7 @@ private fun LiteRtImeSettingsScreen(
                     }
                 }
                 if (selectedLogEntry != null) {
-                    HorizontalDivider()
+                    PastelDivider()
                     Text(
                         text = "回放 ${formatLogTime(selectedLogEntry.timestamp)} · " +
                             "${selectedLogEntry.backendType} · ${selectedLogEntry.mode}",
@@ -1619,7 +1645,7 @@ private fun LiteRtImeSettingsScreen(
                             } else {
                                 ModelCatalog.findLlm(modelId)?.let { storage.isLlmInstalled(it) } ?: false
                             }
-                            FilterChip(
+                            PastelFilterChip(
                                 selected = draftModelId == modelId,
                                 onClick = { draftModelId = modelId },
                                 label = {
@@ -1704,7 +1730,7 @@ private fun LiteRtImeSettingsScreen(
                             )
                         }
                         if (playgroundRunState.running && replayVisible) {
-                            OutlinedButton(
+                            PastelTonalButton(
                                 onClick = {
                                     playgroundRunState.requestId?.let {
                                         inferenceClient.cancelRequest(it)
@@ -1745,7 +1771,7 @@ private fun LiteRtImeSettingsScreen(
                     }
                 }
 
-                HorizontalDivider()
+                PastelDivider()
                 if (logEntries.isEmpty()) {
                     Text(
                         text = "暂无记录。开启开关后，下一次语音请求会被保存到这里。",
@@ -1778,6 +1804,74 @@ private fun LiteRtImeSettingsScreen(
 }
 
 @Composable
+private fun PastelFilterChip(
+    selected: Boolean,
+    onClick: () -> Unit,
+    label: @Composable () -> Unit,
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = label,
+        border = null,
+        colors = FilterChipDefaults.filterChipColors(
+            containerColor = Color(PastelPalette.SURFACE_CHIP_IDLE),
+            labelColor = Color(PastelPalette.TEXT_ON_DARK_SKY),
+            selectedContainerColor = Color(PastelPalette.SKY_BLUE),
+            selectedLabelColor = Color(PastelPalette.INK_ON_PASTEL),
+        ),
+    )
+}
+
+@Composable
+private fun PastelSwitch(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = Color(PastelPalette.INK_ON_PASTEL),
+            checkedTrackColor = Color(PastelPalette.SKY_BLUE),
+            checkedBorderColor = Color.Transparent,
+            uncheckedThumbColor = Color(PastelPalette.TEXT_MUTED),
+            uncheckedTrackColor = Color(PastelPalette.SURFACE_CHIP_IDLE),
+            uncheckedBorderColor = Color.Transparent,
+        ),
+    )
+}
+
+@Composable
+private fun PastelTonalButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit,
+) {
+    FilledTonalButton(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        colors = ButtonDefaults.filledTonalButtonColors(
+            containerColor = Color(PastelPalette.SURFACE_CHIP_IDLE),
+            contentColor = Color(PastelPalette.TEXT_PRIMARY),
+            disabledContainerColor = Color(PastelPalette.SURFACE_MOD_KEY),
+            disabledContentColor = Color(PastelPalette.TEXT_MUTED),
+        ),
+        content = content,
+    )
+}
+
+@Composable
+private fun PastelDivider() {
+    HorizontalDivider(
+        color = MaterialTheme.colorScheme.outlineVariant,
+        thickness = 0.75.dp,
+    )
+}
+
+@Composable
 private fun SettingsHomeItem(
     icon: @Composable () -> Unit,
     title: String,
@@ -1788,6 +1882,7 @@ private fun SettingsHomeItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
@@ -1799,7 +1894,17 @@ private fun SettingsHomeItem(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            icon()
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(PastelPalette.SURFACE_ICON_BADGE)),
+                contentAlignment = Alignment.Center,
+            ) {
+                CompositionLocalProvider(LocalContentColor provides Color.White) {
+                    icon()
+                }
+            }
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -1901,6 +2006,7 @@ private fun SectionCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Column(
@@ -1942,7 +2048,7 @@ private fun PermissionRow(
                 Icon(
                     imageVector = if (granted) Icons.Rounded.CheckCircle else Icons.Rounded.Warning,
                     contentDescription = null,
-                    tint = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                    tint = if (granted) Color(PastelPalette.MINT) else Color(PastelPalette.ROSE_DANGER),
                     modifier = Modifier.size(16.dp),
                 )
             }
@@ -1952,7 +2058,7 @@ private fun PermissionRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        OutlinedButton(onClick = onAction, enabled = enabled) {
+        PastelTonalButton(onClick = onAction, enabled = enabled) {
             Text(actionLabel)
         }
     }
@@ -1964,6 +2070,7 @@ private fun ModelItemRow(
     subtitle: String,
     selected: Boolean,
     installed: Boolean,
+    loaded: Boolean = false,
     downloadState: DownloadState,
     onSelect: () -> Unit,
     onDownload: () -> Unit,
@@ -1987,11 +2094,22 @@ private fun ModelItemRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    if (installed) {
+                    if (loaded) {
+                        Text(
+                            text = "已加载",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(PastelPalette.INK_ON_PASTEL),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(PastelPalette.SKY_BLUE))
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    } else if (installed) {
                         Text(
                             text = "已安装",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
