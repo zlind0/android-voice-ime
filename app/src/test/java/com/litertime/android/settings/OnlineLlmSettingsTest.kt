@@ -42,6 +42,36 @@ class OnlineLlmSettingsTest {
     }
 
     @Test
+    fun rebuttalModeHasItsOwnOnlineProfile() {
+        assertEquals(
+            OnlineLlmModelProfile.SCREENSHOT_REBUTTAL,
+            OnlineLlmModelProfile.fromVoiceMode(VoiceMode.GEMMA_SCREENSHOT_REBUTTAL),
+        )
+        assertEquals(
+            OnlineLlmModelProfile.CORRECTION,
+            OnlineLlmModelProfile.fromVoiceMode(VoiceMode.WHISPER_RAW),
+        )
+
+        val settings = ImeSettings(
+            onlinePerModeModels = true,
+            onlineModelName = "unified-model",
+            onlineOverrides = mapOf(
+                OnlineLlmModelProfile.SCREENSHOT_REBUTTAL to OnlineLlmOverride(
+                    modelName = "rebuttal-model",
+                ),
+            ),
+        )
+        assertEquals(
+            "rebuttal-model",
+            settings.onlineConfigFor(VoiceMode.GEMMA_SCREENSHOT_REBUTTAL).modelName,
+        )
+        assertEquals(
+            "unified-model",
+            settings.onlineConfigFor(VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION).modelName,
+        )
+    }
+
+    @Test
     fun perModeFlagOffAlwaysUsesUnifiedConfig() {
         val settings = ImeSettings(
             onlinePerModeModels = false,

@@ -29,6 +29,11 @@ enum class OnlineLlmModelProfile(
         "截屏指令",
         VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION,
         "ScreenshotInstruction",
+    ),
+    SCREENSHOT_REBUTTAL(
+        "截屏反驳",
+        VoiceMode.GEMMA_SCREENSHOT_REBUTTAL,
+        "ScreenshotRebuttal",
     );
 
     companion object {
@@ -103,11 +108,14 @@ data class ImeSettings(
     val systemPromptOverride: String = "",
     /** Dedicated system prompt for the screenshot instruction mode. Blank keeps the default. */
     val systemPromptScreenshotInstruction: String = "",
+    /** Dedicated system prompt for the screenshot rebuttal mode. Blank keeps the default. */
+    val systemPromptScreenshotRebuttal: String = "",
     /** Per-mode user prompt overrides. Blank keeps the built-in default for that mode. */
     val userPromptWhisperRaw: String = "",
     val userPromptPolishFormal: String = "",
     val userPromptScreenshotCorrection: String = "",
     val userPromptScreenshotInstruction: String = "",
+    val userPromptRebuttal: String = "",
     /** Chinese handwriting delay (ms) after last stroke before auto-commit + fade-out. */
     val handwritingFadeDelayMs: Int = DEFAULT_HANDWRITING_FADE_DELAY_MS,
     val handwritingAutoCommitFirst: Boolean = true,
@@ -201,6 +209,7 @@ data class ImeSettings(
         VoiceMode.GEMMA_POLISH_FORMAL -> userPromptPolishFormal
         VoiceMode.GEMMA_SCREENSHOT_CORRECTION -> userPromptScreenshotCorrection
         VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION -> userPromptScreenshotInstruction
+        VoiceMode.GEMMA_SCREENSHOT_REBUTTAL -> userPromptRebuttal
     }
 
     fun withUserPromptOverride(mode: VoiceMode, prompt: String): ImeSettings = when (mode) {
@@ -208,6 +217,7 @@ data class ImeSettings(
         VoiceMode.GEMMA_POLISH_FORMAL -> copy(userPromptPolishFormal = prompt)
         VoiceMode.GEMMA_SCREENSHOT_CORRECTION -> copy(userPromptScreenshotCorrection = prompt)
         VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION -> copy(userPromptScreenshotInstruction = prompt)
+        VoiceMode.GEMMA_SCREENSHOT_REBUTTAL -> copy(userPromptRebuttal = prompt)
     }
 }
 
@@ -269,10 +279,12 @@ class ImeSettingsStore(private val appFilesDir: File) {
             stripTrailingPeriod = props.getProperty("stripTrailingPeriod", "false").toBoolean(),
             systemPromptOverride = props.getProperty("promptSystem", ""),
             systemPromptScreenshotInstruction = props.getProperty("promptSystemScreenshotInstruction", ""),
+            systemPromptScreenshotRebuttal = props.getProperty("promptSystemScreenshotRebuttal", ""),
             userPromptWhisperRaw = props.getProperty("promptUserWhisperRaw", ""),
             userPromptPolishFormal = props.getProperty("promptUserPolishFormal", ""),
             userPromptScreenshotCorrection = props.getProperty("promptUserScreenshotCorrection", ""),
             userPromptScreenshotInstruction = props.getProperty("promptUserScreenshotInstruction", ""),
+            userPromptRebuttal = props.getProperty("promptUserRebuttal", ""),
             handwritingFadeDelayMs = (props.getProperty("handwritingFadeDelayMs")?.toIntOrNull()
                 ?: ImeSettings.DEFAULT_HANDWRITING_FADE_DELAY_MS)
                 .coerceIn(ImeSettings.MIN_HANDWRITING_FADE_DELAY_MS, ImeSettings.MAX_HANDWRITING_FADE_DELAY_MS),
@@ -339,10 +351,15 @@ class ImeSettingsStore(private val appFilesDir: File) {
                 "promptSystemScreenshotInstruction",
                 settings.systemPromptScreenshotInstruction,
             )
+            setProperty(
+                "promptSystemScreenshotRebuttal",
+                settings.systemPromptScreenshotRebuttal,
+            )
             setProperty("promptUserWhisperRaw", settings.userPromptWhisperRaw)
             setProperty("promptUserPolishFormal", settings.userPromptPolishFormal)
             setProperty("promptUserScreenshotCorrection", settings.userPromptScreenshotCorrection)
             setProperty("promptUserScreenshotInstruction", settings.userPromptScreenshotInstruction)
+            setProperty("promptUserRebuttal", settings.userPromptRebuttal)
             setProperty(
                 "handwritingFadeDelayMs",
                 settings.handwritingFadeDelayMs

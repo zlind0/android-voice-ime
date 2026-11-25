@@ -154,6 +154,10 @@ class InferenceService : Service() {
             } else {
                 null
             }
+            // The IME detected effectively silent audio in the rebuttal mode: the user chose not
+            // to speak, so skip ASR (avoiding Whisper hallucinations) and rebut the screen alone.
+            val skipTranscription = extra.optBoolean("skipTranscription", false) &&
+                voiceMode == VoiceMode.GEMMA_SCREENSHOT_REBUTTAL
             // Replaying a cascade request carries the original ASR transcript so the replay feeds
             // text (not audio) into the model again, exactly like the recorded run.
             val asrTranscriptOverride = if (extra.has("asrTranscript")) {
@@ -185,20 +189,29 @@ class InferenceService : Service() {
             }
             val job = serviceScope.launch {
                 // Voice cascade: Whisper/ASR transcribes first, the LLM only ever sees text.
-                // Screenshot instruction mode always transcribes: its user prompt is the
-                // recognized command text itself, so the model never receives raw audio there.
-                val instructionNeedsTranscript =
-                    voiceMode == VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION
-                val transcript = if (type != "ASR" && (
+                // Screenshot instruction / rebuttal modes always transcribe: their user prompt
+                // is the recognized text itself, so the model never receives raw audio there.
+                val transcriptAsPromptMode = voiceMode.usesTranscriptAsUserPrompt
+                val transcript = when {
+                    type == "ASR" -> null
+                    skipTranscription -> {
+                        updateStatus("未检测到语音，直接反驳图中观点")
+                        ""
+                    }
                     type == "ONLINE_LLM" ||
                         (voiceMode != VoiceMode.WHISPER_RAW &&
-                            (settings.voiceCascadeEnabled || instructionNeedsTranscript))
-                    )
-                ) {
-                    asrTranscriptOverride
-                        ?: transcribeForCascade(reqId, audioFile, languageHint, settings)
-                } else {
-                    null
+                            (settings.voiceCascadeEnabled || transcriptAsPromptMode)) ->
+                        asrTranscriptOverride
+                            ?: transcribeForCascade(
+                                reqId,
+                                audioFile,
+                                languageHint,
+                                settings,
+                                // Rebutting the screen is useful even when the user says nothing.
+                                allowEmptyTranscript =
+                                    voiceMode == VoiceMode.GEMMA_SCREENSHOT_REBUTTAL,
+                            )
+                    else -> null
                 }
                 val cascade = transcript != null
                 val resolvedSystemPrompt = if (type == "ASR") {
@@ -209,14 +222,22 @@ class InferenceService : Service() {
                         saved = settings.systemPromptOverride,
                         cascade = cascade,
                         mode = voiceMode,
-                        modeSaved = settings.systemPromptScreenshotInstruction,
+                        dedicatedSaved = mapOf(
+                            VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION to
+                                settings.systemPromptScreenshotInstruction,
+                            VoiceMode.GEMMA_SCREENSHOT_REBUTTAL to
+                                settings.systemPromptScreenshotRebuttal,
+                        ),
                     )
                 }
-                // The instruction mode feeds the ASR transcript as the user prompt verbatim.
-                // A playground override that differs from the transcript is still honoured.
+                // The instruction / rebuttal modes feed the ASR transcript as the user prompt
+                // verbatim. A playground override that differs from the transcript is still
+                // honoured. In the rebuttal mode an empty transcript is valid (the user chose to
+                // say nothing), so it falls back to the screenshot-only template instead.
                 val transcriptAsUserPrompt =
-                    voiceMode == VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION &&
+                    transcriptAsPromptMode &&
                         transcript != null &&
+                        (voiceMode != VoiceMode.GEMMA_SCREENSHOT_REBUTTAL || transcript.isNotBlank()) &&
                         (userPromptOverride == null || userPromptOverride == transcript)
                 val resolvedUserPrompt = when {
                     type == "ASR" -> ""
@@ -355,12 +376,17 @@ class InferenceService : Service() {
      * Runs the Whisper/ASR stage of the voice cascade and returns the transcript without
      * broadcasting any tokens to the IME. Returns null when ASR is unavailable or the audio could
      * not be recognized, so the caller can fall back to feeding audio straight into Gemma.
+     *
+     * When [allowEmptyTranscript] is true (rebuttal mode, where saying nothing is a valid way to
+     * ask for a rebuttal of the screen), a successful but empty recognition yields `""` instead of
+     * null, so the request still runs against the screenshot without falling back to audio.
      */
     private suspend fun transcribeForCascade(
         requestId: String,
         audioFile: File,
         languageHint: String,
         settings: ImeSettings,
+        allowEmptyTranscript: Boolean = false,
     ): String? {
         val spec = ModelCatalog.findAsr(settings.activeAsrModelId)
             ?.takeIf { modelStorage.isAsrInstalled(it) }
@@ -408,8 +434,13 @@ class InferenceService : Service() {
                 null
             }
             transcript.isEmpty() -> {
-                updateStatus("语音级联：未识别到语音内容，回退本地模型直接识别")
-                null
+                if (allowEmptyTranscript) {
+                    updateStatus("语音级联：未识别到语音，直接反驳图中观点")
+                    ""
+                } else {
+                    updateStatus("语音级联：未识别到语音内容，回退本地模型直接识别")
+                    null
+                }
             }
             else -> transcript
         }

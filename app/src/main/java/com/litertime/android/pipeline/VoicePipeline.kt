@@ -9,6 +9,16 @@ enum class VoiceMode {
     GEMMA_POLISH_FORMAL,
     GEMMA_SCREENSHOT_CORRECTION,
     GEMMA_SCREENSHOT_INSTRUCTION,
+    GEMMA_SCREENSHOT_REBUTTAL,
+    ;
+
+    /**
+     * Modes whose user prompt is exactly the ASR transcript: the model receives the recognized
+     * text as the user message, and all instruction-following semantics live in the dedicated
+     * system prompt. They always transcribe first and never feed raw audio to the LLM.
+     */
+    val usesTranscriptAsUserPrompt: Boolean
+        get() = this == GEMMA_SCREENSHOT_INSTRUCTION || this == GEMMA_SCREENSHOT_REBUTTAL
 }
 
 data class VoiceGenerationRequest(

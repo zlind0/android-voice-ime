@@ -17,6 +17,7 @@ enum class RadialAction(val label: String) {
     GEMMA_POLISH_FORMAL("润色·正式"),
     GEMMA_SCREENSHOT_CORRECTION("截屏纠错"),
     GEMMA_SCREENSHOT_INSTRUCTION("截屏指令"),
+    GEMMA_SCREENSHOT_REBUTTAL("截屏反驳"),
     CANCEL("取消"),
 }
 
@@ -48,6 +49,28 @@ data class RadialEvaluation(
  */
 object RadialMenuGeometry {
     const val CENTER_ZONE_RATIO: Float = 0.56f
+
+    /**
+     * Outer-ring sectors of the AI mic, ordered from the far right (`0°`) to the far left
+     * (`180°`). Every sector sweeps an equal [SECTOR_SWEEP_DEG] of the semicircle:
+     *
+     * ```
+     * 180° ┌ 取消 ┬ 正式 ┬ 截屏 ┬ 指令 ┬ 反驳 ┐ 0°
+     * ```
+     */
+    val GEMMA_OUTER_SECTORS: List<RadialAction> = listOf(
+        RadialAction.GEMMA_SCREENSHOT_REBUTTAL,
+        RadialAction.GEMMA_SCREENSHOT_INSTRUCTION,
+        RadialAction.GEMMA_SCREENSHOT_CORRECTION,
+        RadialAction.GEMMA_POLISH_FORMAL,
+        RadialAction.CANCEL,
+    )
+
+    /** Number of equal outer-ring sectors of the AI mic. */
+    const val SECTOR_COUNT: Int = 5
+
+    /** Angular width of one outer-ring sector, `180° / [SECTOR_COUNT]`. */
+    const val SECTOR_SWEEP_DEG: Float = 180f / SECTOR_COUNT
 
     /** Action committed when the finger stays in the inner disc (i.e. the AI mic default). */
     fun centerActionFor(source: MicSource): RadialAction = when (source) {
@@ -94,15 +117,7 @@ object RadialMenuGeometry {
         val action = if (distanceRatio < CENTER_ZONE_RATIO) {
             centerActionFor(source)
         } else {
-            when (source) {
-                MicSource.WHISPER -> RadialAction.CANCEL
-                MicSource.GEMMA -> when {
-                    angleDeg >= 135f -> RadialAction.CANCEL
-                    angleDeg >= 90f -> RadialAction.GEMMA_POLISH_FORMAL
-                    angleDeg >= 45f -> RadialAction.GEMMA_SCREENSHOT_CORRECTION
-                    else -> RadialAction.GEMMA_SCREENSHOT_INSTRUCTION
-                }
-            }
+            outerActionFor(source, angleDeg)
         }
 
         return RadialEvaluation(
@@ -113,6 +128,30 @@ object RadialMenuGeometry {
             angleDegrees = angleDeg,
         )
     }
+
+    /** Outer-ring action for [angleDegrees], measured from `0°` (right) to `180°` (left). */
+    fun outerActionFor(source: MicSource, angleDegrees: Float): RadialAction = when (source) {
+        MicSource.WHISPER -> RadialAction.CANCEL
+        MicSource.GEMMA -> {
+            val index = (angleDegrees / SECTOR_SWEEP_DEG)
+                .toInt()
+                .coerceIn(0, GEMMA_OUTER_SECTORS.lastIndex)
+            GEMMA_OUTER_SECTORS[index]
+        }
+    }
+
+    /** Index of [action] in [GEMMA_OUTER_SECTORS], or `-1` when it is not an outer sector. */
+    fun sectorIndex(action: RadialAction): Int = GEMMA_OUTER_SECTORS.indexOf(action)
+
+    /** Mid-arc angle of the sector at [index] (`index 0` = far right), used to place its label. */
+    fun sectorMidAngle(index: Int): Float = SECTOR_SWEEP_DEG * (index + 0.5f)
+
+    /**
+     * Canvas `startAngle` for drawing the sector at [index] with `Canvas.drawArc`, where `0°` is
+     * 3 o'clock and angles grow clockwise (the Y axis points down).
+     */
+    fun sectorCanvasStartAngle(index: Int): Float =
+        180f + SECTOR_SWEEP_DEG * (SECTOR_COUNT - 1 - index)
 
     fun pointOnArc(
         anchorX: Float,

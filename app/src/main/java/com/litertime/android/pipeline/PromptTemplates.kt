@@ -23,23 +23,45 @@ object PromptTemplates {
 """.trimIndent()
 
     /**
+     * Dedicated system prompt for the screenshot rebuttal mode. The user message is exactly the ASR
+     * transcript (the user's spoken stance, arguments, or objection to what is on screen), so this
+     * prompt must both locate the viewpoint in the screenshot and fold in the user's own position.
+     * An empty transcript is a valid input here: the model then rebuts the main on-screen claim.
+     */
+    val SYSTEM_PROMPT_SCREENSHOT_REBUTTAL: String = """
+你是一个输入法里的反驳助手，不是聊天助手。用户会附带当前屏幕截图，并把语音识别后的文本作为用户输入；这段文本通常代表用户自己的立场、论据或对图中观点的不满。请先找出截图中要反驳的核心观点，再结合用户的立场，用犀利、精准、针针见血、毒辣、祖安的语言写出可直接上屏的反驳，大约 50 到 100 字。只输出反驳正文，不要添加任何前缀、解释、引号或 Markdown 包裹；不要复述截图内容。如果用户的语音文本为空或与截图无关，就直接反驳图中最主要的观点。
+""".trimIndent()
+
+    /** Built-in dedicated system prompt for [mode], or null when it shares the unified prompt. */
+    fun dedicatedSystemPromptFor(mode: VoiceMode): String? = when (mode) {
+        VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION -> SYSTEM_PROMPT_SCREENSHOT_INSTRUCTION
+        VoiceMode.GEMMA_SCREENSHOT_REBUTTAL -> SYSTEM_PROMPT_SCREENSHOT_REBUTTAL
+        VoiceMode.WHISPER_RAW,
+        VoiceMode.GEMMA_POLISH_FORMAL,
+        VoiceMode.GEMMA_SCREENSHOT_CORRECTION,
+        -> null
+    }
+
+    /**
      * Resolves the system prompt actually sent to the model. A non-null [override] wins so the
      * debug playground can replay a request with an edited prompt (including an intentionally
-     * empty one) without touching the defaults. The screenshot instruction mode uses its own
-     * saved prompt ([modeSaved]) and built-in default. Other modes use the shared saved prompt,
-     * with a blank value meaning "keep the built-in default"; [cascade] selects the ASR-text
-     * default.
+     * empty one) without touching the defaults. Modes with a dedicated prompt use their saved
+     * override ([dedicatedSaved]) or the built-in default. Other modes use the shared saved
+     * prompt, with a blank value meaning "keep the built-in default"; [cascade] selects the
+     * ASR-text default.
      */
     fun resolveSystemPrompt(
         override: String?,
         saved: String? = null,
         cascade: Boolean = false,
         mode: VoiceMode? = null,
-        modeSaved: String? = null,
+        dedicatedSaved: Map<VoiceMode, String> = emptyMap(),
     ): String {
         override?.let { return it }
-        if (mode == VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION) {
-            return modeSaved?.takeIf { it.isNotBlank() } ?: SYSTEM_PROMPT_SCREENSHOT_INSTRUCTION
+        val dedicatedDefault = mode?.let(::dedicatedSystemPromptFor)
+        if (dedicatedDefault != null) {
+            val modeSaved = dedicatedSaved[mode]
+            return modeSaved?.takeIf { it.isNotBlank() } ?: dedicatedDefault
         }
         return saved?.takeIf { it.isNotBlank() }
             ?: if (cascade) SYSTEM_PROMPT_CASCADE_VOICE_IME else SYSTEM_PROMPT_VOICE_IME
@@ -68,6 +90,8 @@ object PromptTemplates {
             "请结合附带的当前屏幕截图理解上下文，将这段语音转写为文字，并纠正与屏幕内容明显不符的识别错误，注意用户输入与屏幕内容的关联性；保持用户原本的表达、语气和意图，不要照搬或扩写截图内容。直接输出纠正后的最终文本。\n"
         VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION ->
             "请结合附带的当前屏幕截图理解上下文，并严格按照语音中的指令直接生成可输入到当前输入框的文本结果，不要输出多余说明。如果用户没有要求，大约输出50-100字。\n"
+        VoiceMode.GEMMA_SCREENSHOT_REBUTTAL ->
+            "请结合这段语音中用户表达的立场或论据，针对当前屏幕截图中的主要观点，用犀利、针针见血、毒辣、凶狠、尖锐、祖安的语言写一段20-50字的反驳。直接输出反驳正文。\n"
     }
 
     /**
@@ -83,5 +107,7 @@ object PromptTemplates {
             "以下文字来自语音识别，可能含同音字、断句或标点错误。请结合附带的当前屏幕截图理解上下文，纠正与屏幕内容明显不符的识别错误，并输出纠正后的最终文本；保持用户原本的表达、语气和意图，不要照搬或扩写截图内容。\n"
         VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION ->
             "以下文字是语音指令的识别结果，可能含同音字、断句或标点错误。请结合附带的当前屏幕截图理解上下文，严格按照指令直接生成可输入到当前输入框的文本结果，不要输出多余说明。如果用户没有要求，大约输出50-100字。\n"
+        VoiceMode.GEMMA_SCREENSHOT_REBUTTAL ->
+            "请针对当前屏幕截图中的主要观点，用犀利、针针见血、凶狠、尖锐、祖安的语言写一段50-100字的反驳。如果识别文本中给出了用户的立场或论据，请融入反驳，但不要复述识别文本；如果识别文本为空，就直接反驳图中最主要的观点。直接输出反驳正文。\n"
     }
 }

@@ -611,6 +611,14 @@ private fun LiteRtImeSettingsScreen(
                 "指令 Prompt 已自定义"
             },
         )
+        append(" · ")
+        append(
+            if (settings.systemPromptScreenshotRebuttal.isBlank()) {
+                "反驳 Prompt 默认"
+            } else {
+                "反驳 Prompt 已自定义"
+            },
+        )
         val customizedModes = VoiceMode.entries.count { settings.userPromptOverride(it).isNotBlank() }
         append(" · ")
         append(
@@ -770,7 +778,7 @@ private fun LiteRtImeSettingsScreen(
                     icon = { Icon(Icons.Rounded.Screenshot, contentDescription = null) },
                     title = "无障碍截屏服务",
                     subtitle = when {
-                        a11yConnected -> "已连接（支持「截屏纠错」「截屏指令」）"
+                        a11yConnected -> "已连接（支持「截屏纠错」「截屏指令」「反驳」）"
                         a11yEnabled -> "系统已启用，等待连接"
                         else -> "使用 Gemma 4 截屏功能前需开启一次"
                     },
@@ -1008,9 +1016,9 @@ private fun LiteRtImeSettingsScreen(
                         Text("语音级联", style = MaterialTheme.typography.bodyMedium)
                         Text(
                             text = if (settings.voiceCascadeEnabled) {
-                                "AI 麦克风先用下方 Whisper/ASR 模型转写为文字，再把文字交给大模型处理；「截屏指令」始终走这条文字通道"
+                                "AI 麦克风先用下方 Whisper/ASR 模型转写为文字，再把文字交给大模型处理；「截屏指令」「反驳」始终走这条文字通道"
                             } else {
-                                "关闭时由 Gemma 4 直接理解语音（端到端多模态）；「截屏指令」仍会先转写为文字"
+                                "关闭时由 Gemma 4 直接理解语音（端到端多模态）；「截屏指令」「反驳」仍会先转写为文字"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1524,7 +1532,7 @@ private fun LiteRtImeSettingsScreen(
                 )
                 Text("统一 System Prompt", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    text = "除「截屏指令」外的所有模式共用。",
+                    text = "除「截屏指令」「反驳」外的所有模式共用。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1563,52 +1571,58 @@ private fun LiteRtImeSettingsScreen(
                 }
 
                 PastelDivider()
-                Text("指令模式 System Prompt", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    text = "仅「截屏指令」使用。该模式的用户提示词固定为语音识别后的文本，模型按这段指令处理屏幕内容并输出可上屏结果。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedTextField(
+                DedicatedSystemPromptEditor(
+                    title = "指令模式 System Prompt",
+                    description = "仅「截屏指令」使用。该模式的用户提示词固定为语音识别后的文本，模型按这段指令处理屏幕内容并输出可上屏结果。",
+                    fieldLabel = "截屏指令专用",
                     value = settings.systemPromptScreenshotInstruction,
+                    defaultTemplate = PromptTemplates.SYSTEM_PROMPT_SCREENSHOT_INSTRUCTION,
                     onValueChange = { value ->
                         settings = settingsStore.update {
                             it.copy(systemPromptScreenshotInstruction = value)
                         }
                     },
-                    label = { Text("截屏指令专用") },
-                    placeholder = { Text(PromptTemplates.SYSTEM_PROMPT_SCREENSHOT_INSTRUCTION) },
-                    minLines = 4,
-                    maxLines = 12,
-                    modifier = Modifier.fillMaxWidth(),
+                    onFillDefault = {
+                        settings = settingsStore.update {
+                            it.copy(
+                                systemPromptScreenshotInstruction =
+                                    PromptTemplates.SYSTEM_PROMPT_SCREENSHOT_INSTRUCTION,
+                            )
+                        }
+                    },
+                    onReset = {
+                        settings = settingsStore.update {
+                            it.copy(systemPromptScreenshotInstruction = "")
+                        }
+                    },
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    TextButton(
-                        onClick = {
-                            settings = settingsStore.update {
-                                it.copy(
-                                    systemPromptScreenshotInstruction =
-                                        PromptTemplates.SYSTEM_PROMPT_SCREENSHOT_INSTRUCTION,
-                                )
-                            }
-                        },
-                    ) {
-                        Text("填入默认模板")
-                    }
-                    TextButton(
-                        enabled = settings.systemPromptScreenshotInstruction.isNotBlank(),
-                        onClick = {
-                            settings = settingsStore.update {
-                                it.copy(systemPromptScreenshotInstruction = "")
-                            }
-                        },
-                    ) {
-                        Text("恢复默认")
-                    }
-                }
+
+                PastelDivider()
+                DedicatedSystemPromptEditor(
+                    title = "反驳模式 System Prompt",
+                    description = "仅「反驳」使用。用户提示词固定为语音识别后的文本（用户自己的立场或论据）；用户不说话时也可以直接反驳图中主要观点。",
+                    fieldLabel = "截屏反驳专用",
+                    value = settings.systemPromptScreenshotRebuttal,
+                    defaultTemplate = PromptTemplates.SYSTEM_PROMPT_SCREENSHOT_REBUTTAL,
+                    onValueChange = { value ->
+                        settings = settingsStore.update {
+                            it.copy(systemPromptScreenshotRebuttal = value)
+                        }
+                    },
+                    onFillDefault = {
+                        settings = settingsStore.update {
+                            it.copy(
+                                systemPromptScreenshotRebuttal =
+                                    PromptTemplates.SYSTEM_PROMPT_SCREENSHOT_REBUTTAL,
+                            )
+                        }
+                    },
+                    onReset = {
+                        settings = settingsStore.update {
+                            it.copy(systemPromptScreenshotRebuttal = "")
+                        }
+                    },
+                )
 
                 PastelDivider()
                 Text("各模式 User Prompt", style = MaterialTheme.typography.titleSmall)
@@ -1641,6 +1655,8 @@ private fun LiteRtImeSettingsScreen(
                         supportingText = {
                             Text(
                                 when {
+                                    mode == VoiceMode.GEMMA_SCREENSHOT_REBUTTAL ->
+                                        "反驳模式默认直接把识别文本作为用户提示词；语音为空或 ASR 不可用时改用此模板"
                                     mode == VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION ->
                                         "指令模式默认直接把识别文本作为用户提示词；此模板仅在 ASR 不可用时兜底"
                                     savedPrompt.isBlank() -> "当前使用内置默认模板"
@@ -2561,11 +2577,54 @@ private fun LogEntryRow(
     }
 }
 
+@Composable
+private fun DedicatedSystemPromptEditor(
+    title: String,
+    description: String,
+    fieldLabel: String,
+    value: String,
+    defaultTemplate: String,
+    onValueChange: (String) -> Unit,
+    onFillDefault: () -> Unit,
+    onReset: () -> Unit,
+) {
+    Text(title, style = MaterialTheme.typography.titleSmall)
+    Text(
+        text = description,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(fieldLabel) },
+        placeholder = { Text(defaultTemplate) },
+        minLines = 4,
+        maxLines = 12,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        TextButton(onClick = onFillDefault) {
+            Text("填入默认模板")
+        }
+        TextButton(
+            enabled = value.isNotBlank(),
+            onClick = onReset,
+        ) {
+            Text("恢复默认")
+        }
+    }
+}
+
 private fun voiceModePromptLabel(mode: VoiceMode): String = when (mode) {
     VoiceMode.WHISPER_RAW -> "普通纠错"
     VoiceMode.GEMMA_POLISH_FORMAL -> "正式润色"
     VoiceMode.GEMMA_SCREENSHOT_CORRECTION -> "截屏纠错"
     VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION -> "截屏并执行指令"
+    VoiceMode.GEMMA_SCREENSHOT_REBUTTAL -> "截屏并反驳观点"
 }
 
 private fun formatLogTime(timestamp: Long): String =

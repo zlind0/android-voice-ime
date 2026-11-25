@@ -23,6 +23,9 @@ import org.json.JSONObject
 
 private const val TAG = "OnlineLlmBackend"
 
+/** Upper bound for the raw body kept to parse a single non-streaming completion object. */
+private const val MAX_RAW_RESPONSE_CHARS = 256 * 1024
+
 /**
  * OpenAI-compatible online backend. It consumes the ASR transcript (or the screenshot instruction
  * text) and streams the chat-completion answer through the same contract as the on-device model.
@@ -83,10 +86,44 @@ class OnlineLlmBackend(
                     emit(GenerationEvent.FallbackToLocal("在线模型未返回响应体"))
                     return@use
                 }
-                val contentType = res.header("Content-Type").orEmpty()
-                if (contentType.contains("application/json", ignoreCase = true)) {
-                    val full = bodySource.string()
-                    val text = runCatching { OnlineLlmApi.parseAssistantText(full) }
+                // Consume the body line by line so tokens reach the IME as soon as the server
+                // flushes them. The content type is deliberately NOT used to pick a buffered
+                // path: some OpenAI-compatible gateways label a streaming response as
+                // `application/json`, which used to make the whole answer appear at once.
+                val rawResponse = StringBuilder()
+                var sawStreamFrame = false
+                bodySource.source().use { source ->
+                    while (true) {
+                        val line = source.readUtf8Line() ?: break
+                        val trimmed = line.trim()
+                        if (trimmed.isEmpty()) continue
+                        if (trimmed.startsWith(":")) continue // SSE comment / keep-alive
+                        if (trimmed.startsWith("data:")) {
+                            sawStreamFrame = true
+                            val payload = trimmed.removePrefix("data:").trim()
+                            if (payload == "[DONE]") break
+                            val text = runCatching { parseSseDelta(payload) }.getOrNull().orEmpty()
+                            if (text.isEmpty()) continue
+                            emittedToken = true
+                            emit(GenerationEvent.Token(text))
+                            continue
+                        }
+                        // Bare JSON line: either an NDJSON stream delta or a single completion
+                        // object (some providers ignore `stream: true`). Keep the raw text only
+                        // until the first token arrives so a pretty-printed object still parses.
+                        if (!emittedToken && rawResponse.length < MAX_RAW_RESPONSE_CHARS) {
+                            rawResponse.append(line).append('\n')
+                        }
+                        val text = runCatching { parseSseDelta(trimmed) }.getOrNull().orEmpty()
+                        if (text.isNotEmpty()) {
+                            sawStreamFrame = true
+                            emittedToken = true
+                            emit(GenerationEvent.Token(text))
+                        }
+                    }
+                }
+                if (!emittedToken && !sawStreamFrame && rawResponse.isNotBlank()) {
+                    val text = runCatching { OnlineLlmApi.parseAssistantText(rawResponse.toString()) }
                         .getOrElse { error ->
                             terminal = true
                             emit(GenerationEvent.Error("解析在线模型响应失败：${error.message}"))
@@ -95,20 +132,6 @@ class OnlineLlmBackend(
                     if (text.isNotEmpty()) {
                         emittedToken = true
                         emit(GenerationEvent.Token(text))
-                    }
-                } else {
-                    bodySource.source().use { source ->
-                        while (true) {
-                            val line = source.readUtf8Line() ?: break
-                            if (line.isBlank()) continue
-                            if (!line.startsWith("data:")) continue
-                            val payload = line.removePrefix("data:").trim()
-                            if (payload == "[DONE]") break
-                            val text = runCatching { parseSseDelta(payload) }.getOrNull().orEmpty()
-                            if (text.isEmpty()) continue
-                            emittedToken = true
-                            emit(GenerationEvent.Token(text))
-                        }
                     }
                 }
             }
@@ -190,7 +213,7 @@ class OnlineLlmBackend(
                     cascade = true,
                 )
             if (prompt.isNotBlank()) append(prompt)
-            if (!request.userPromptIsTranscript) {
+            if (!request.userPromptIsTranscript && transcript.isNotBlank()) {
                 if (isNotEmpty() && !endsWith("\n")) append('\n')
                 append("\n[语音识别文本]:\n")
                 append(transcript)

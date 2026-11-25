@@ -1,6 +1,7 @@
 package com.litertime.android.pipeline
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -65,7 +66,9 @@ class PromptTemplatesTest {
             PromptTemplates.resolveSystemPrompt(
                 override = null,
                 mode = VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION,
-                modeSaved = "指令专用提示词",
+                dedicatedSaved = mapOf(
+                    VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION to "指令专用提示词",
+                ),
             ),
         )
         assertEquals(
@@ -73,19 +76,60 @@ class PromptTemplatesTest {
             PromptTemplates.resolveSystemPrompt(
                 override = "回放覆盖",
                 mode = VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION,
-                modeSaved = "指令专用提示词",
+                dedicatedSaved = mapOf(
+                    VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION to "指令专用提示词",
+                ),
             ),
         )
-        // Other modes keep using the shared prompt.
+        // Other modes keep using the shared prompt, and a rebuttal-only override does not leak.
         assertEquals(
             "全局系统提示词",
             PromptTemplates.resolveSystemPrompt(
                 override = null,
                 saved = "全局系统提示词",
                 mode = VoiceMode.WHISPER_RAW,
-                modeSaved = "指令专用提示词",
+                dedicatedSaved = mapOf(
+                    VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION to "指令专用提示词",
+                    VoiceMode.GEMMA_SCREENSHOT_REBUTTAL to "反驳专用提示词",
+                ),
             ),
         )
+    }
+
+    @Test
+    fun rebuttalModeHasItsOwnPromptAndCanRunWithoutSpeech() {
+        assertEquals(
+            PromptTemplates.SYSTEM_PROMPT_SCREENSHOT_REBUTTAL,
+            PromptTemplates.resolveSystemPrompt(
+                override = null,
+                saved = "全局系统提示词",
+                mode = VoiceMode.GEMMA_SCREENSHOT_REBUTTAL,
+            ),
+        )
+        assertEquals(
+            "反驳专用提示词",
+            PromptTemplates.resolveSystemPrompt(
+                override = null,
+                saved = "全局系统提示词",
+                mode = VoiceMode.GEMMA_SCREENSHOT_REBUTTAL,
+                dedicatedSaved = mapOf(VoiceMode.GEMMA_SCREENSHOT_REBUTTAL to "反驳专用提示词"),
+            ),
+        )
+        assertTrue(PromptTemplates.SYSTEM_PROMPT_SCREENSHOT_REBUTTAL.contains("反驳"))
+        assertTrue(PromptTemplates.SYSTEM_PROMPT_SCREENSHOT_REBUTTAL.contains("50 到 100 字"))
+
+        // The transcript is the user prompt in this mode, and an empty transcript is valid:
+        // the fallback template still asks for a rebuttal of the main on-screen claim.
+        assertTrue(VoiceMode.GEMMA_SCREENSHOT_REBUTTAL.usesTranscriptAsUserPrompt)
+        assertTrue(VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION.usesTranscriptAsUserPrompt)
+        assertFalse(VoiceMode.GEMMA_SCREENSHOT_CORRECTION.usesTranscriptAsUserPrompt)
+        assertFalse(VoiceMode.WHISPER_RAW.usesTranscriptAsUserPrompt)
+        val emptySpeechFallback = PromptTemplates.userPromptFor(
+            VoiceMode.GEMMA_SCREENSHOT_REBUTTAL,
+            cascade = true,
+        )
+        assertTrue(emptySpeechFallback.isNotBlank())
+        assertTrue(emptySpeechFallback.contains("识别文本为空"))
     }
 
     @Test

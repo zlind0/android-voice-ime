@@ -1294,7 +1294,11 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         if (isTrayTargeted) {
             // Suppressed while targeted in lower tray
         } else if (currentAction == RadialAction.CANCEL) {
-            val sweepAngle = if (source == MicSource.WHISPER) 180f else 45f
+            val sweepAngle = if (source == MicSource.WHISPER) {
+                180f
+            } else {
+                RadialMenuGeometry.SECTOR_SWEEP_DEG
+            }
             drawRingSector(canvas, anchorX, anchorY, innerR, currentR, 180f, sweepAngle, sectorCancelPaint)
         } else if (source == MicSource.GEMMA) {
             if (currentDistanceRatio < RadialMenuGeometry.CENTER_ZONE_RATIO) {
@@ -1305,14 +1309,18 @@ class VoiceImeOverlayView @JvmOverloads constructor(
                 }
                 canvas.drawPath(centerPath, centerHighlightPaint)
             } else {
-                when (currentAction) {
-                    RadialAction.GEMMA_POLISH_FORMAL ->
-                        drawRingSector(canvas, anchorX, anchorY, innerR, currentR, 225f, 45f, sectorHighlightPaint)
-                    RadialAction.GEMMA_SCREENSHOT_CORRECTION ->
-                        drawRingSector(canvas, anchorX, anchorY, innerR, currentR, 270f, 45f, sectorHighlightPaint)
-                    RadialAction.GEMMA_SCREENSHOT_INSTRUCTION ->
-                        drawRingSector(canvas, anchorX, anchorY, innerR, currentR, 315f, 45f, sectorHighlightPaint)
-                    else -> Unit
+                val index = RadialMenuGeometry.sectorIndex(currentAction)
+                if (index >= 0) {
+                    drawRingSector(
+                        canvas,
+                        anchorX,
+                        anchorY,
+                        innerR,
+                        currentR,
+                        RadialMenuGeometry.sectorCanvasStartAngle(index),
+                        RadialMenuGeometry.SECTOR_SWEEP_DEG,
+                        sectorHighlightPaint,
+                    )
                 }
             }
         } else {
@@ -1331,15 +1339,23 @@ class VoiceImeOverlayView @JvmOverloads constructor(
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 90f, "取消")
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.30f, 90f, "普通识别")
         } else {
-            for (angle in listOf(45f, 90f, 135f)) {
+            for (index in 1 until RadialMenuGeometry.SECTOR_COUNT) {
+                val angle = 180f - RadialMenuGeometry.SECTOR_SWEEP_DEG * index
                 val (x1, y1) = RadialMenuGeometry.pointOnArc(anchorX, anchorY, innerR, angle)
                 val (x2, y2) = RadialMenuGeometry.pointOnArc(anchorX, anchorY, currentR, angle)
                 canvas.drawLine(x1, y1, x2, y2, dividerPaint)
             }
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 157.5f, "取消")
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 112.5f, "正式")
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 67.5f, "截屏")
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 22.5f, "指令")
+            val sectorLabels = listOf("反驳", "指令", "截屏", "正式", "取消")
+            sectorLabels.forEachIndexed { index, label ->
+                drawSectorLabel(
+                    canvas,
+                    anchorX,
+                    anchorY,
+                    currentR * 0.78f,
+                    RadialMenuGeometry.sectorMidAngle(index),
+                    label,
+                )
+            }
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.28f, 90f, "普通纠错")
         }
 
@@ -1354,6 +1370,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
                 RadialAction.GEMMA_POLISH_FORMAL -> "正在聆听 · 润色为正式书面语"
                 RadialAction.GEMMA_SCREENSHOT_CORRECTION -> "正在聆听 · 结合截屏纠正识别"
                 RadialAction.GEMMA_SCREENSHOT_INSTRUCTION -> "正在聆听 · 结合截屏执行指令"
+                RadialAction.GEMMA_SCREENSHOT_REBUTTAL -> "正在聆听 · 犀利反驳图中观点"
                 RadialAction.NONE -> "正在聆听..."
             }
             val pillWidth = pillTextPaint.measureText(hintText) + dp(28f)

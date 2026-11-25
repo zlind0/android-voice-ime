@@ -218,13 +218,15 @@ class LiteRtGemmaBackend(
                 }
 
                 // 3) Input always last: audio, or the ASR transcript in cascade mode. The
-                // instruction mode already carries the transcript as its user prompt.
+                // instruction / rebuttal modes already carry the transcript as their user prompt.
+                // A blank transcript means recognition succeeded but the user said nothing (only
+                // valid in rebuttal mode); then the screenshot + fallback prompt stand alone.
                 val transcript = request.asrTranscript
-                if (transcript != null) {
+                if (!transcript.isNullOrBlank()) {
                     if (!request.userPromptIsTranscript) {
                         list.add(Content.Text("\n[语音识别文本]:\n$transcript"))
                     }
-                } else {
+                } else if (transcript == null) {
                     list.add(Content.Text("\n[语音]:"))
                     list.add(Content.AudioBytes(request.audioWavFile.readBytes()))
                 }

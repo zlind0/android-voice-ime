@@ -36,7 +36,7 @@ class RadialMenuGeometryTest {
     }
 
     @Test
-    fun gemmaCenterDefaultsToPlainCorrectionAndEdgesMapAllFourSectors() {
+    fun gemmaCenterDefaultsToPlainCorrectionAndEdgesMapAllFiveSectors() {
         val center = RadialMenuGeometry.evaluate(
             anchorX = anchorX,
             anchorY = anchorY,
@@ -50,12 +50,15 @@ class RadialMenuGeometryTest {
             RadialAction.WHISPER_TRANSCRIBE,
             RadialMenuGeometry.centerActionFor(MicSource.GEMMA),
         )
+        assertEquals(5, RadialMenuGeometry.GEMMA_OUTER_SECTORS.size)
+        assertEquals(36f, RadialMenuGeometry.SECTOR_SWEEP_DEG, 0.001f)
 
         val cases = listOf(
-            160f to RadialAction.CANCEL,
-            115f to RadialAction.GEMMA_POLISH_FORMAL,
-            65f to RadialAction.GEMMA_SCREENSHOT_CORRECTION,
-            20f to RadialAction.GEMMA_SCREENSHOT_INSTRUCTION,
+            162f to RadialAction.CANCEL,
+            126f to RadialAction.GEMMA_POLISH_FORMAL,
+            90f to RadialAction.GEMMA_SCREENSHOT_CORRECTION,
+            54f to RadialAction.GEMMA_SCREENSHOT_INSTRUCTION,
+            18f to RadialAction.GEMMA_SCREENSHOT_REBUTTAL,
         )
         for ((angle, expected) in cases) {
             val (px, py) = RadialMenuGeometry.pointOnArc(anchorX, anchorY, 170f, angle)
@@ -69,6 +72,55 @@ class RadialMenuGeometryTest {
             )
             assertEquals("Angle $angle mismatch", expected, eval.action)
         }
+    }
+
+    @Test
+    fun fiveSectorsSplitTheSemicircleIntoThirtySixDegreeWedges() {
+        val cases = listOf(
+            0.5f to RadialAction.GEMMA_SCREENSHOT_REBUTTAL,
+            35.9f to RadialAction.GEMMA_SCREENSHOT_REBUTTAL,
+            36.1f to RadialAction.GEMMA_SCREENSHOT_INSTRUCTION,
+            71.9f to RadialAction.GEMMA_SCREENSHOT_INSTRUCTION,
+            72.1f to RadialAction.GEMMA_SCREENSHOT_CORRECTION,
+            107.9f to RadialAction.GEMMA_SCREENSHOT_CORRECTION,
+            108.1f to RadialAction.GEMMA_POLISH_FORMAL,
+            143.9f to RadialAction.GEMMA_POLISH_FORMAL,
+            144.1f to RadialAction.CANCEL,
+            179.9f to RadialAction.CANCEL,
+        )
+        for ((angle, expected) in cases) {
+            assertEquals(
+                "Angle $angle boundary mismatch",
+                expected,
+                RadialMenuGeometry.outerActionFor(MicSource.GEMMA, angle),
+            )
+        }
+        assertEquals(
+            RadialAction.CANCEL,
+            RadialMenuGeometry.outerActionFor(MicSource.GEMMA, 180f),
+        )
+    }
+
+    @Test
+    fun sectorDrawingHelpersMatchTheOuterSectorOrder() {
+        assertEquals(
+            listOf(324f, 288f, 252f, 216f, 180f),
+            RadialMenuGeometry.GEMMA_OUTER_SECTORS.indices.map {
+                RadialMenuGeometry.sectorCanvasStartAngle(it)
+            },
+        )
+        assertEquals(
+            listOf(18f, 54f, 90f, 126f, 162f),
+            RadialMenuGeometry.GEMMA_OUTER_SECTORS.indices.map {
+                RadialMenuGeometry.sectorMidAngle(it)
+            },
+        )
+        assertEquals(
+            0,
+            RadialMenuGeometry.sectorIndex(RadialAction.GEMMA_SCREENSHOT_REBUTTAL),
+        )
+        assertEquals(4, RadialMenuGeometry.sectorIndex(RadialAction.CANCEL))
+        assertEquals(-1, RadialMenuGeometry.sectorIndex(RadialAction.NONE))
     }
 
     @Test

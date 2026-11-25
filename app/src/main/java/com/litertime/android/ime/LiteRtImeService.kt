@@ -26,6 +26,7 @@ import androidx.core.view.WindowInsetsCompat
 import com.litertime.android.LiteRtImeApp
 import com.litertime.android.accessibility.ScreenCaptureAccessibilityService
 import com.litertime.android.audio.AudioCaptureManager
+import com.litertime.android.audio.SilenceDetector
 import com.litertime.android.audio.WavEncoder
 import com.litertime.android.handwriting.HandwritingPanelView
 import com.litertime.android.ime.traditional.EnglishKeyboardPanelView
@@ -552,8 +553,15 @@ class LiteRtImeService : InputMethodService() {
             RadialAction.GEMMA_POLISH_FORMAL -> VoiceMode.GEMMA_POLISH_FORMAL
             RadialAction.GEMMA_SCREENSHOT_CORRECTION -> VoiceMode.GEMMA_SCREENSHOT_CORRECTION
             RadialAction.GEMMA_SCREENSHOT_INSTRUCTION -> VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION
+            RadialAction.GEMMA_SCREENSHOT_REBUTTAL -> VoiceMode.GEMMA_SCREENSHOT_REBUTTAL
             RadialAction.CANCEL, RadialAction.NONE -> return
         }
+
+        // Rebuttal is the one mode where saying nothing is valid: the model then rebuts the main
+        // on-screen claim. Skip ASR for effectively silent audio so Whisper cannot hallucinate a
+        // sentence that would be mistaken for the user's own argument.
+        val skipTranscription = mode == VoiceMode.GEMMA_SCREENSHOT_REBUTTAL &&
+            SilenceDetector.isEffectivelySilent(pcmBytes)
 
         val state = inferenceClient.statusState.value
         val onlineUsable = settings.onlineLlmPreferred &&
@@ -585,6 +593,7 @@ class LiteRtImeService : InputMethodService() {
             when {
                 backendType == "ASR" -> "正在识别语音..."
                 mode == VoiceMode.WHISPER_RAW -> "正在识别与纠错..."
+                mode == VoiceMode.GEMMA_SCREENSHOT_REBUTTAL -> "正在思考与反驳..."
                 else -> "正在思考与润色..."
             },
             cancellable = true,
@@ -596,7 +605,8 @@ class LiteRtImeService : InputMethodService() {
             var screenshotFile: File? = null
 
             val needsScreenshot = mode == VoiceMode.GEMMA_SCREENSHOT_CORRECTION ||
-                mode == VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION
+                mode == VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION ||
+                mode == VoiceMode.GEMMA_SCREENSHOT_REBUTTAL
             if (needsScreenshot) {
                 if (!ScreenCaptureAccessibilityService.isReady()) {
                     commitGuard.complete(requestId)
@@ -642,6 +652,9 @@ class LiteRtImeService : InputMethodService() {
 
             val extraJson = JSONObject().apply {
                 put("language", settings.whisperLanguage)
+                if (skipTranscription) {
+                    put("skipTranscription", true)
+                }
             }.toString()
 
             val dispatched = inferenceClient.runRequest(

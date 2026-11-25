@@ -182,6 +182,10 @@ object OnlineLlmApi {
                 .url(chatCompletionsUrl(baseUrl))
                 .post(body.toRequestBody(jsonMediaType))
                 .header("Accept", "text/event-stream")
+                // Keep proxies from buffering the whole SSE body: identity encoding plus a
+                // no-cache hint lets each `data:` frame arrive as soon as the server flushes it.
+                .header("Accept-Encoding", "identity")
+                .header("Cache-Control", "no-cache")
                 .applyAuth(apiKey)
                 .build(),
         )
