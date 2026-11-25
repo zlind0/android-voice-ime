@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.LiteRtIme" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#FF112026</item>
-        <item name="android:statusBarColor">#FF112026</item>
-        <item name="android:navigationBarColor">#FF112026</item>
+        <item name="android:windowBackground">#FF1E2028</item>
+        <item name="android:statusBarColor">#FF1E2028</item>
+        <item name="android:navigationBarColor">#FF1E2028</item>
     </style>
 </resources>

@@ -16,46 +16,36 @@ import androidx.compose.ui.graphics.Color
  *
  * Every other surface is derived from [background] by blending a fixed-opacity white overlay
  * ([whiteOverlay]) – or, for the few darker tokens, a fixed-opacity black overlay. This keeps the
- * whole keyboard visually coherent for any background the user picks.
- *
- * With all three values left at their defaults, every token resolves to the original hand-tuned
- * ARGB constant, so the existing UI is pixel-identical.
+ * whole keyboard visually coherent for any background the user picks, including the default one.
  */
 class PastelThemeColors(
     val accent1: Int = PastelPalette.DEFAULT_ACCENT_1,
     val accent2: Int = PastelPalette.DEFAULT_ACCENT_2,
     val background: Int = PastelPalette.DEFAULT_BG_CANVAS,
 ) {
-    private val isDefaultBackground = background == PastelPalette.DEFAULT_BG_CANVAS
     private val isDefaultAccent1 = accent1 == PastelPalette.DEFAULT_ACCENT_1
     private val isDefaultAccent2 = accent2 == PastelPalette.DEFAULT_ACCENT_2
 
-    private fun whiteOverlay(alpha: Float, default: Int): Int =
-        if (isDefaultBackground) default else blendArgb(background, WHITE, alpha)
+    private fun whiteOverlay(alpha: Float): Int = blendArgb(background, WHITE, alpha)
 
-    private fun blackOverlay(alpha: Float, default: Int): Int =
-        if (isDefaultBackground) default else blendArgb(background, BLACK, alpha)
+    private fun blackOverlay(alpha: Float): Int = blendArgb(background, BLACK, alpha)
 
     // ---- Background-derived surfaces -------------------------------------------------------
     val bgCanvas: Int = background
-    val surfaceLowest: Int = blackOverlay(0.03f, 0xFF0E1B20.toInt())
-    val surfaceCard: Int = whiteOverlay(0.045f, 0xFF172B33.toInt())
-    val surfacePad: Int = whiteOverlay(0.040f, 0xFF172A31.toInt())
-    val surfaceModKey: Int = whiteOverlay(0.035f, 0xFF162930.toInt())
-    val surfaceSideBtn: Int = whiteOverlay(0.065f, 0xFF1A3038.toInt())
-    val surfaceMicInactive: Int = whiteOverlay(0.072f, 0xFF1B323B.toInt())
-    val surfaceCharKey: Int = whiteOverlay(0.070f, 0xFF1C3139.toInt())
-    val surfaceChipIdle: Int = whiteOverlay(0.095f, 0xFF1E3842.toInt())
-    val surfaceIconBadge: Int = whiteOverlay(0.105f, 0xFF1F3A44.toInt())
-    val surfacePressed: Int = whiteOverlay(0.145f, 0xFF26444F.toInt())
-    val surfaceKeyPressed: Int = whiteOverlay(0.160f, 0xFF2B4752.toInt())
-    val surfacePopup: Int = whiteOverlay(0.140f, 0xFF26424D.toInt())
+    val surfaceLowest: Int = blackOverlay(0.03f)
+    val surfaceCard: Int = whiteOverlay(0.045f)
+    val surfacePad: Int = whiteOverlay(0.040f)
+    val surfaceModKey: Int = whiteOverlay(0.035f)
+    val surfaceSideBtn: Int = whiteOverlay(0.065f)
+    val surfaceMicInactive: Int = whiteOverlay(0.072f)
+    val surfaceCharKey: Int = whiteOverlay(0.070f)
+    val surfaceChipIdle: Int = whiteOverlay(0.095f)
+    val surfaceIconBadge: Int = whiteOverlay(0.105f)
+    val surfacePressed: Int = whiteOverlay(0.145f)
+    val surfaceKeyPressed: Int = whiteOverlay(0.160f)
+    val surfacePopup: Int = whiteOverlay(0.140f)
     val surfaceBackspacePressed: Int =
-        if (isDefaultBackground && isDefaultAccent2) {
-            0xFF5C2933.toInt()
-        } else {
-            blendArgb(background, withHslLightness(accent2, 0.28f), 0.85f)
-        }
+        blendArgb(background, withHslLightness(accent2, 0.28f), 0.85f)
 
     // ---- Accents ---------------------------------------------------------------------------
     val skyBlue: Int = accent1
@@ -85,8 +75,8 @@ class PastelThemeColors(
     val inkOnRose: Int = 0xFF141619.toInt()
 
     // ---- Translucent overlays --------------------------------------------------------------
-    val discBg: Int = if (isDefaultBackground) 0xF215272E.toInt() else withAlpha(background, 0xF2)
-    val pillBg: Int = if (isDefaultBackground) 0xEE1A313A.toInt() else withAlpha(background, 0xEE)
+    val discBg: Int = withAlpha(background, 0xF2)
+    val pillBg: Int = withAlpha(background, 0xEE)
 
     val sectorHighlight: Int = withAlpha(accent1, 0x55)
     val centerHighlight: Int = withAlpha(accent1, 0x38)
@@ -117,7 +107,7 @@ class PastelThemeColors(
 object PastelPalette {
     val DEFAULT_ACCENT_1 = 0xFFADDDEF.toInt()
     val DEFAULT_ACCENT_2 = 0xFFEDBDC6.toInt()
-    val DEFAULT_BG_CANVAS = 0xFF112026.toInt()
+    val DEFAULT_BG_CANVAS = 0xFF1E2028.toInt()
 
     @Volatile
     private var current: PastelThemeColors = PastelThemeColors()
@@ -268,38 +258,6 @@ internal fun withHslLightness(color: Int, lightness: Float): Int {
     return hslToArgb(hsl[0], hsl[1], lightness.coerceIn(0f, 1f))
 }
 
-private val DarkPastelColorScheme = darkColorScheme(
-    primary = Color(0xFFADDDEF),
-    onPrimary = Color(0xFF141619),
-    primaryContainer = Color(0xFF22424E),
-    onPrimaryContainer = Color(0xFFFFFFFF),
-    secondary = Color(0xFFEDBDC6),
-    onSecondary = Color(0xFF141619),
-    secondaryContainer = Color(0xFF213F4A),
-    onSecondaryContainer = Color(0xFFFFFFFF),
-    tertiary = Color(0xFFD2CCF2),
-    onTertiary = Color(0xFF141619),
-    tertiaryContainer = Color(0xFF2B2840),
-    onTertiaryContainer = Color(0xFFFFFFFF),
-    background = Color(0xFF112026),
-    onBackground = Color(0xFFFFFFFF),
-    surface = Color(0xFF112026),
-    onSurface = Color(0xFFFFFFFF),
-    surfaceVariant = Color(0xFF1A3038),
-    onSurfaceVariant = Color(0xFFA1A7AE),
-    surfaceContainerLowest = Color(0xFF0E1B20),
-    surfaceContainerLow = Color(0xFF172B33),
-    surfaceContainer = Color(0xFF1C343D),
-    surfaceContainerHigh = Color(0xFF233E48),
-    surfaceContainerHighest = Color(0xFF2A4854),
-    error = Color(0xFFF68BA0),
-    onError = Color(0xFF141619),
-    errorContainer = Color(0xFF422228),
-    onErrorContainer = Color(0xFFFBD5DC),
-    outline = Color(0xFF2C4A56),
-    outlineVariant = Color(0xFF1E3842),
-)
-
 private fun customColorScheme(palette: PastelThemeColors) = darkColorScheme(
     primary = Color(palette.skyBlue),
     onPrimary = Color(palette.inkOnPastel),
@@ -339,15 +297,8 @@ fun LiteRtPastelTheme(
     backgroundColor: Int = PastelPalette.DEFAULT_BG_CANVAS,
     content: @Composable () -> Unit,
 ) {
-    val isDefault = accentColor1 == PastelPalette.DEFAULT_ACCENT_1 &&
-        accentColor2 == PastelPalette.DEFAULT_ACCENT_2 &&
-        backgroundColor == PastelPalette.DEFAULT_BG_CANVAS
     val colorScheme = remember(accentColor1, accentColor2, backgroundColor) {
-        if (isDefault) {
-            DarkPastelColorScheme
-        } else {
-            customColorScheme(PastelPalette.colorsFor(accentColor1, accentColor2, backgroundColor))
-        }
+        customColorScheme(PastelPalette.colorsFor(accentColor1, accentColor2, backgroundColor))
     }
     MaterialTheme(
         colorScheme = colorScheme,
