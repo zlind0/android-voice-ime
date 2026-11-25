@@ -570,6 +570,14 @@ private fun LiteRtImeSettingsScreen(
 
     val promptsPreview = buildString {
         append(if (settings.systemPromptOverride.isBlank()) "系统 Prompt 默认" else "系统 Prompt 已自定义")
+        append(" · ")
+        append(
+            if (settings.systemPromptScreenshotInstruction.isBlank()) {
+                "指令 Prompt 默认"
+            } else {
+                "指令 Prompt 已自定义"
+            },
+        )
         val customizedModes = VoiceMode.entries.count { settings.userPromptOverride(it).isNotBlank() }
         append(" · ")
         append(
@@ -967,9 +975,9 @@ private fun LiteRtImeSettingsScreen(
                         Text("语音级联", style = MaterialTheme.typography.bodyMedium)
                         Text(
                             text = if (settings.voiceCascadeEnabled) {
-                                "AI 麦克风先用下方 Whisper/ASR 模型转写为文字，再把文字交给大模型处理；截屏纠错与截屏指令同样生效"
+                                "AI 麦克风先用下方 Whisper/ASR 模型转写为文字，再把文字交给大模型处理；「截屏指令」始终走这条文字通道"
                             } else {
-                                "关闭时由 Gemma 4 直接理解语音（端到端多模态），不经过 Whisper"
+                                "关闭时由 Gemma 4 直接理解语音（端到端多模态）；「截屏指令」仍会先转写为文字"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1532,6 +1540,11 @@ private fun LiteRtImeSettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text("统一 System Prompt", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = "除「截屏指令」外的所有模式共用。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 OutlinedTextField(
                     value = settings.systemPromptOverride,
                     onValueChange = { value ->
@@ -1567,6 +1580,54 @@ private fun LiteRtImeSettingsScreen(
                 }
 
                 PastelDivider()
+                Text("指令模式 System Prompt", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = "仅「截屏指令」使用。该模式的用户提示词固定为语音识别后的文本，模型按这段指令处理屏幕内容并输出可上屏结果。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = settings.systemPromptScreenshotInstruction,
+                    onValueChange = { value ->
+                        settings = settingsStore.update {
+                            it.copy(systemPromptScreenshotInstruction = value)
+                        }
+                    },
+                    label = { Text("截屏指令专用") },
+                    placeholder = { Text(PromptTemplates.SYSTEM_PROMPT_SCREENSHOT_INSTRUCTION) },
+                    minLines = 4,
+                    maxLines = 12,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    TextButton(
+                        onClick = {
+                            settings = settingsStore.update {
+                                it.copy(
+                                    systemPromptScreenshotInstruction =
+                                        PromptTemplates.SYSTEM_PROMPT_SCREENSHOT_INSTRUCTION,
+                                )
+                            }
+                        },
+                    ) {
+                        Text("填入默认模板")
+                    }
+                    TextButton(
+                        enabled = settings.systemPromptScreenshotInstruction.isNotBlank(),
+                        onClick = {
+                            settings = settingsStore.update {
+                                it.copy(systemPromptScreenshotInstruction = "")
+                            }
+                        },
+                    ) {
+                        Text("恢复默认")
+                    }
+                }
+
+                PastelDivider()
                 Text("各模式 User Prompt", style = MaterialTheme.typography.titleSmall)
                 Text(
                     text = if (settings.voiceCascadeEnabled) {
@@ -1595,7 +1656,14 @@ private fun LiteRtImeSettingsScreen(
                         minLines = 3,
                         maxLines = 10,
                         supportingText = {
-                            Text(if (savedPrompt.isBlank()) "当前使用内置默认模板" else "已自定义")
+                            Text(
+                                when {
+                                    mode == VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION ->
+                                        "指令模式默认直接把识别文本作为用户提示词；此模板仅在 ASR 不可用时兜底"
+                                    savedPrompt.isBlank() -> "当前使用内置默认模板"
+                                    else -> "已自定义"
+                                },
+                            )
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -2358,10 +2426,10 @@ private fun LogEntryRow(
 }
 
 private fun voiceModePromptLabel(mode: VoiceMode): String = when (mode) {
-    VoiceMode.WHISPER_RAW -> "原样转写"
+    VoiceMode.WHISPER_RAW -> "普通纠错"
     VoiceMode.GEMMA_POLISH_FORMAL -> "正式润色"
     VoiceMode.GEMMA_SCREENSHOT_CORRECTION -> "截屏纠错"
-    VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION -> "截屏指令"
+    VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION -> "截屏并执行指令"
 }
 
 private fun formatLogTime(timestamp: Long): String =

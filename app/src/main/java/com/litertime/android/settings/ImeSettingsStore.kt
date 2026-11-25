@@ -53,6 +53,8 @@ data class ImeSettings(
     val stripTrailingPeriod: Boolean = false,
     /** Unified system prompt. Blank keeps the built-in default from `PromptTemplates`. */
     val systemPromptOverride: String = "",
+    /** Dedicated system prompt for the screenshot instruction mode. Blank keeps the default. */
+    val systemPromptScreenshotInstruction: String = "",
     /** Per-mode user prompt overrides. Blank keeps the built-in default for that mode. */
     val userPromptWhisperRaw: String = "",
     val userPromptPolishFormal: String = "",
@@ -174,6 +176,7 @@ class ImeSettingsStore(private val appFilesDir: File) {
             debugRequestLoggingEnabled = props.getProperty("debugRequestLoggingEnabled", "false").toBoolean(),
             stripTrailingPeriod = props.getProperty("stripTrailingPeriod", "false").toBoolean(),
             systemPromptOverride = props.getProperty("promptSystem", ""),
+            systemPromptScreenshotInstruction = props.getProperty("promptSystemScreenshotInstruction", ""),
             userPromptWhisperRaw = props.getProperty("promptUserWhisperRaw", ""),
             userPromptPolishFormal = props.getProperty("promptUserPolishFormal", ""),
             userPromptScreenshotCorrection = props.getProperty("promptUserScreenshotCorrection", ""),
@@ -233,6 +236,10 @@ class ImeSettingsStore(private val appFilesDir: File) {
             setProperty("debugRequestLoggingEnabled", settings.debugRequestLoggingEnabled.toString())
             setProperty("stripTrailingPeriod", settings.stripTrailingPeriod.toString())
             setProperty("promptSystem", settings.systemPromptOverride)
+            setProperty(
+                "promptSystemScreenshotInstruction",
+                settings.systemPromptScreenshotInstruction,
+            )
             setProperty("promptUserWhisperRaw", settings.userPromptWhisperRaw)
             setProperty("promptUserPolishFormal", settings.userPromptPolishFormal)
             setProperty("promptUserScreenshotCorrection", settings.userPromptScreenshotCorrection)

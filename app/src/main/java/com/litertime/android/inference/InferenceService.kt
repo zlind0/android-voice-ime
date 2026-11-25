@@ -165,13 +165,15 @@ class InferenceService : Service() {
             }
             val job = serviceScope.launch {
                 // Voice cascade: Whisper/ASR transcribes first, the LLM only ever sees text.
-                val transcript = if (type != "ASR" && voiceMode != VoiceMode.WHISPER_RAW) {
+                // Screenshot instruction mode always transcribes: its user prompt is the
+                // recognized command text itself, so the model never receives raw audio there.
+                val instructionNeedsTranscript =
+                    voiceMode == VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION
+                val transcript = if (type != "ASR" && voiceMode != VoiceMode.WHISPER_RAW &&
+                    (settings.voiceCascadeEnabled || instructionNeedsTranscript)
+                ) {
                     asrTranscriptOverride
-                        ?: if (settings.voiceCascadeEnabled) {
-                            transcribeForCascade(reqId, audioFile, languageHint, settings)
-                        } else {
-                            null
-                        }
+                        ?: transcribeForCascade(reqId, audioFile, languageHint, settings)
                 } else {
                     null
                 }
@@ -183,12 +185,20 @@ class InferenceService : Service() {
                         override = systemPromptOverride,
                         saved = settings.systemPromptOverride,
                         cascade = cascade,
+                        mode = voiceMode,
+                        modeSaved = settings.systemPromptScreenshotInstruction,
                     )
                 }
-                val resolvedUserPrompt = if (type == "ASR") {
-                    ""
-                } else {
-                    PromptTemplates.resolveUserPrompt(
+                // The instruction mode feeds the ASR transcript as the user prompt verbatim.
+                // A playground override that differs from the transcript is still honoured.
+                val transcriptAsUserPrompt =
+                    voiceMode == VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION &&
+                        transcript != null &&
+                        (userPromptOverride == null || userPromptOverride == transcript)
+                val resolvedUserPrompt = when {
+                    type == "ASR" -> ""
+                    transcriptAsUserPrompt -> transcript.orEmpty()
+                    else -> PromptTemplates.resolveUserPrompt(
                         mode = voiceMode,
                         override = userPromptOverride,
                         saved = settings.userPromptOverride(voiceMode),
@@ -229,6 +239,7 @@ class InferenceService : Service() {
                                 screenshotFile = imageFile,
                                 languageHint = languageHint,
                                 asrTranscript = transcript,
+                                userPromptIsTranscript = transcriptAsUserPrompt,
                                 systemPrompt = requestSystemPrompt,
                                 userPrompt = requestUserPrompt,
                             ),
@@ -255,6 +266,7 @@ class InferenceService : Service() {
                             screenshotFile = imageFile,
                             languageHint = languageHint,
                             asrTranscript = transcript,
+                            userPromptIsTranscript = transcriptAsUserPrompt,
                             systemPrompt = requestSystemPrompt,
                             userPrompt = requestUserPrompt,
                         ),

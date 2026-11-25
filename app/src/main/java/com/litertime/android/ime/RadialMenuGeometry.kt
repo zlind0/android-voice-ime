@@ -52,7 +52,9 @@ object RadialMenuGeometry {
     /** Action committed when the finger stays in the inner disc (i.e. the AI mic default). */
     fun centerActionFor(source: MicSource): RadialAction = when (source) {
         MicSource.WHISPER -> RadialAction.WHISPER_TRANSCRIBE
-        MicSource.GEMMA -> RadialAction.GEMMA_SCREENSHOT_CORRECTION
+        // Plain correction without a screenshot: reuse the raw ASR transcript mode so the
+        // default AI-mic gesture never captures the screen.
+        MicSource.GEMMA -> RadialAction.WHISPER_TRANSCRIBE
     }
 
     fun evaluate(

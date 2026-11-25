@@ -51,6 +51,44 @@ class PromptTemplatesTest {
     }
 
     @Test
+    fun instructionModeUsesDedicatedSystemPrompt() {
+        assertEquals(
+            PromptTemplates.SYSTEM_PROMPT_SCREENSHOT_INSTRUCTION,
+            PromptTemplates.resolveSystemPrompt(
+                override = null,
+                saved = "全局系统提示词",
+                mode = VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION,
+            ),
+        )
+        assertEquals(
+            "指令专用提示词",
+            PromptTemplates.resolveSystemPrompt(
+                override = null,
+                mode = VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION,
+                modeSaved = "指令专用提示词",
+            ),
+        )
+        assertEquals(
+            "回放覆盖",
+            PromptTemplates.resolveSystemPrompt(
+                override = "回放覆盖",
+                mode = VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION,
+                modeSaved = "指令专用提示词",
+            ),
+        )
+        // Other modes keep using the shared prompt.
+        assertEquals(
+            "全局系统提示词",
+            PromptTemplates.resolveSystemPrompt(
+                override = null,
+                saved = "全局系统提示词",
+                mode = VoiceMode.WHISPER_RAW,
+                modeSaved = "指令专用提示词",
+            ),
+        )
+    }
+
+    @Test
     fun savedPromptsOverrideDefaultsAndBlankFallsBack() {
         val mode = VoiceMode.GEMMA_SCREENSHOT_CORRECTION
 

@@ -519,7 +519,11 @@ class LiteRtImeService : InputMethodService() {
         commitGuard.startRequest(requestId)
         trailingPeriodStripper.reset()
         rootContainer.voiceOverlayView.updateStatusBanner(
-            if (backendType == "ASR") "正在识别语音..." else "正在思考与润色...",
+            when {
+                backendType == "ASR" -> "正在识别语音..."
+                mode == VoiceMode.WHISPER_RAW -> "正在识别与纠错..."
+                else -> "正在思考与润色..."
+            },
             cancellable = true,
         )
 

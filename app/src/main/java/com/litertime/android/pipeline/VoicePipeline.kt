@@ -22,6 +22,11 @@ data class VoiceGenerationRequest(
      * consumes this text instead of the audio, and the prompts describe an ASR transcript.
      */
     val asrTranscript: String? = null,
+    /**
+     * True when [userPrompt] already *is* the ASR transcript (screenshot instruction mode), so
+     * the backend must not append a separate transcript block and must not feed audio.
+     */
+    val userPromptIsTranscript: Boolean = false,
     /** Optional override for the system prompt, used by the debug playground. */
     val systemPrompt: String? = null,
     /** Optional override for the mode's user prompt, used by the debug playground. */

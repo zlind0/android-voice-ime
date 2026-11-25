@@ -217,10 +217,13 @@ class LiteRtGemmaBackend(
                     }
                 }
 
-                // 3) Input always last: audio, or the ASR transcript in cascade mode.
+                // 3) Input always last: audio, or the ASR transcript in cascade mode. The
+                // instruction mode already carries the transcript as its user prompt.
                 val transcript = request.asrTranscript
                 if (transcript != null) {
-                    list.add(Content.Text("\n[语音识别文本]:\n$transcript"))
+                    if (!request.userPromptIsTranscript) {
+                        list.add(Content.Text("\n[语音识别文本]:\n$transcript"))
+                    }
                 } else {
                     list.add(Content.Text("\n[语音]:"))
                     list.add(Content.AudioBytes(request.audioWavFile.readBytes()))

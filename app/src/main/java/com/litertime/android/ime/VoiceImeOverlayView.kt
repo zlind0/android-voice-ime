@@ -1308,15 +1308,19 @@ class VoiceImeOverlayView @JvmOverloads constructor(
             }
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 157.5f, "取消")
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 112.5f, "正式")
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 67.5f, "纠错")
+            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 67.5f, "截屏")
             drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 22.5f, "指令")
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.28f, 90f, "截屏纠错")
+            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.28f, 90f, "普通纠错")
         }
 
         if (!isTrayTargeted) {
             val hintText = when (currentAction) {
                 RadialAction.CANCEL -> "松手取消本次语音"
-                RadialAction.WHISPER_TRANSCRIBE -> "正在聆听 · Whisper 原样输出"
+                RadialAction.WHISPER_TRANSCRIBE -> if (source == MicSource.GEMMA) {
+                    "正在聆听 · 普通纠错"
+                } else {
+                    "正在聆听 · Whisper 原样输出"
+                }
                 RadialAction.GEMMA_POLISH_FORMAL -> "正在聆听 · 润色为正式书面语"
                 RadialAction.GEMMA_SCREENSHOT_CORRECTION -> "正在聆听 · 结合截屏纠正识别"
                 RadialAction.GEMMA_SCREENSHOT_INSTRUCTION -> "正在聆听 · 结合截屏执行指令"
