@@ -23,6 +23,8 @@ data class InferenceStatusState(
     val asrModelId: String = "",
     val llmModelId: String = "",
     val llmLoadedWithGpu: Boolean = false,
+    /** True while online priority is suspended after a timeout/offline fallback. */
+    val onlineFallbackActive: Boolean = false,
     /** pid of the `:inference` process, used by the IME to read real model memory (PSS). */
     val inferencePid: Int = 0,
 ) {
@@ -50,6 +52,7 @@ data class InferenceStatusState(
                 asrModelId = obj.optString("asr", ""),
                 llmModelId = obj.optString("llm", ""),
                 llmLoadedWithGpu = obj.optBoolean("llmGpu", false),
+                onlineFallbackActive = obj.optBoolean("onlineFallback", false),
                 inferencePid = obj.optInt("pid", 0),
             )
         }

@@ -38,6 +38,12 @@ sealed interface GenerationEvent {
     data class Token(val delta: String) : GenerationEvent
     data object Completed : GenerationEvent
     data class Error(val message: String) : GenerationEvent
+
+    /**
+     * The online backend could not start (offline/timeout/bad config) before producing any token.
+     * The host service should transparently continue with the on-device model.
+     */
+    data class FallbackToLocal(val reason: String) : GenerationEvent
 }
 
 /**

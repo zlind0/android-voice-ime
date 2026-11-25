@@ -40,6 +40,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -78,6 +80,10 @@ class InferenceService : Service() {
 
     @Volatile
     private var llmLoadedWithGpu: Boolean = false
+
+    /** True after an online request failed and the service fell back to the local model. */
+    @Volatile
+    private var onlineFallbackActive: Boolean = false
 
     @Volatile
     private var currentStatusText: String = "未加载模型"
@@ -161,7 +167,7 @@ class InferenceService : Service() {
             val modelDisplayName = when (type) {
                 "ASR" -> ModelCatalog.findAsr(id)?.displayName ?: id
                 "LLM" -> ModelCatalog.findLlm(id)?.displayName ?: id
-                else -> settings.onlineModelName.ifBlank { id }
+                else -> settings.onlineConfigFor(voiceMode).modelName.ifBlank { id }
             }
             val job = serviceScope.launch {
                 // Voice cascade: Whisper/ASR transcribes first, the LLM only ever sees text.
@@ -169,8 +175,11 @@ class InferenceService : Service() {
                 // recognized command text itself, so the model never receives raw audio there.
                 val instructionNeedsTranscript =
                     voiceMode == VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION
-                val transcript = if (type != "ASR" && voiceMode != VoiceMode.WHISPER_RAW &&
-                    (settings.voiceCascadeEnabled || instructionNeedsTranscript)
+                val transcript = if (type != "ASR" && (
+                    type == "ONLINE_LLM" ||
+                        (voiceMode != VoiceMode.WHISPER_RAW &&
+                            (settings.voiceCascadeEnabled || instructionNeedsTranscript))
+                    )
                 ) {
                     asrTranscriptOverride
                         ?: transcribeForCascade(reqId, audioFile, languageHint, settings)
@@ -229,8 +238,7 @@ class InferenceService : Service() {
                 }
                 try {
                     if (type == "ONLINE_LLM") {
-                        runStreamingBackend(
-                            backend = onlineBackend,
+                        runOnlineRequest(
                             request = VoiceGenerationRequest(
                                 requestId = reqId,
                                 mode = voiceMode,
@@ -320,6 +328,7 @@ class InferenceService : Service() {
         activeRequestJobs.clear()
         asrBackend.unload()
         gemmaBackend.unload()
+        onlineBackend.unload()
         callbacks.kill()
         serviceScope.cancel()
         super.onDestroy()
@@ -340,11 +349,11 @@ class InferenceService : Service() {
             ?.takeIf { modelStorage.isAsrInstalled(it) }
             ?: modelStorage.findFirstInstalledAsrId()?.let { ModelCatalog.findAsr(it) }
         if (spec == null) {
-            updateStatus("语音级联：未安装 Whisper/ASR 模型，回退 Gemma 直接识别")
+            updateStatus("语音级联：未安装 Whisper/ASR 模型，回退本地模型直接识别")
             return null
         }
         if (!ensureBackendLoaded("ASR", spec.id)) {
-            updateStatus("语音级联：ASR 模型加载失败，回退 Gemma 直接识别")
+            updateStatus("语音级联：ASR 模型加载失败，回退本地模型直接识别")
             return null
         }
 
@@ -365,6 +374,7 @@ class InferenceService : Service() {
                     is GenerationEvent.Token -> builder.append(event.delta)
                     is GenerationEvent.Completed -> Unit
                     is GenerationEvent.Error -> failure = event.message
+                    is GenerationEvent.FallbackToLocal -> failure = event.reason
                 }
             }
         } catch (t: CancellationException) {
@@ -377,11 +387,11 @@ class InferenceService : Service() {
         return when {
             failure != null -> {
                 Log.w(TAG, "Cascade ASR failed, falling back to Gemma: $failure")
-                updateStatus("语音级联：ASR 识别失败，回退 Gemma 直接识别")
+                updateStatus("语音级联：ASR 识别失败，回退本地模型直接识别")
                 null
             }
             transcript.isEmpty() -> {
-                updateStatus("语音级联：未识别到语音内容，回退 Gemma 直接识别")
+                updateStatus("语音级联：未识别到语音内容，回退本地模型直接识别")
                 null
             }
             else -> transcript
@@ -483,6 +493,7 @@ class InferenceService : Service() {
                     gemmaBackend.unload()
                     llmModelId = ""
                     llmLoadedWithGpu = false
+                    onlineFallbackActive = false
                 }
             }
             val text = if (asrModelId.isBlank() && llmModelId.isBlank()) {
@@ -512,8 +523,103 @@ class InferenceService : Service() {
         put("asr", asrModelId)
         put("llm", llmModelId)
         put("llmGpu", llmLoadedWithGpu)
+        put("onlineFallback", onlineFallbackActive)
         put("pid", Process.myPid())
     }.toString()
+
+    /**
+     * Streams the online model, and on a pre-token timeout/offline/5xx failure transparently loads
+     * the local Gemma model and repeats the request there.
+     */
+    private suspend fun runOnlineRequest(
+        request: VoiceGenerationRequest,
+        recorder: RequestLogRecorder?,
+    ) {
+        setOnlineFallbackActive(false)
+        val output = StringBuilder()
+        var terminal = false
+        var fallbackReason: String? = null
+        try {
+            onlineBackend.generateStream(request).collect { event ->
+                when (event) {
+                    is GenerationEvent.Status -> updateStatus(event.message)
+                    is GenerationEvent.Token -> {
+                        output.append(event.delta)
+                        broadcastToken(request.requestId, event.delta)
+                    }
+                    is GenerationEvent.Completed -> {
+                        terminal = true
+                        broadcastComplete(request.requestId)
+                        recorder?.finish(output.toString(), "completed", "")
+                    }
+                    is GenerationEvent.Error -> {
+                        terminal = true
+                        broadcastError(request.requestId, event.message)
+                        recorder?.finish(output.toString(), "error", event.message)
+                    }
+                    is GenerationEvent.FallbackToLocal -> {
+                        if (output.isEmpty()) {
+                            fallbackReason = event.reason
+                        } else {
+                            terminal = true
+                            val message = "${event.reason}，在线输出已中止"
+                            broadcastError(request.requestId, message)
+                            recorder?.finish(output.toString(), "error", message)
+                        }
+                    }
+                }
+            }
+        } catch (t: CancellationException) {
+            throw t
+        } catch (t: Throwable) {
+            if (!currentCoroutineContext().isActive) {
+                throw CancellationException("在线请求已取消")
+            }
+            if (output.isEmpty()) {
+                fallbackReason = t.message ?: "在线请求失败"
+            } else {
+                terminal = true
+                val message = t.message ?: "在线推理异常"
+                broadcastError(request.requestId, message)
+                recorder?.finish(output.toString(), "error", message)
+            }
+        }
+
+        if (terminal) return
+
+        val reason = fallbackReason ?: "在线大模型没有返回内容"
+        setOnlineFallbackActive(true)
+        updateStatus("$reason，正在回落到本地模型...")
+        val localModelId = resolveLocalLlmModelId()
+        val loaded = ensureBackendLoaded("LLM", localModelId)
+        if (!loaded || llmModelId.isBlank()) {
+            val message = "$reason，且本地模型不可用：$currentStatusText"
+            broadcastError(request.requestId, message)
+            recorder?.finish(output.toString(), "error", message)
+            return
+        }
+        runStreamingBackend(
+            backend = gemmaBackend,
+            request = request.copy(modelId = llmModelId),
+            recorder = recorder,
+        )
+    }
+
+    private fun resolveLocalLlmModelId(): String {
+        val configured = ModelCatalog.findLlm(settingsStore.getSettings().activeLlmModelId)
+        return if (configured != null && modelStorage.isLlmInstalled(configured)) {
+            configured.id
+        } else {
+            modelStorage.findFirstInstalledLlmId()
+                ?: settingsStore.getSettings().activeLlmModelId
+        }
+    }
+
+    private fun setOnlineFallbackActive(active: Boolean) {
+        if (onlineFallbackActive == active) return
+        onlineFallbackActive = active
+        broadcastState()
+    }
 
     private suspend fun runStreamingBackend(
         backend: TextGenerationBackend,
@@ -540,6 +646,11 @@ class InferenceService : Service() {
                         errorMessage = event.message
                         broadcastError(request.requestId, errorMessage)
                     }
+                    is GenerationEvent.FallbackToLocal -> {
+                        status = "error"
+                        errorMessage = event.reason
+                        broadcastError(request.requestId, errorMessage)
+                    }
                 }
             }
         } catch (t: CancellationException) {
@@ -563,6 +674,7 @@ class InferenceService : Service() {
             asrModelId = ""
             llmModelId = ""
             llmLoadedWithGpu = false
+            onlineFallbackActive = false
             updateStatus("模型已卸载")
         }
         if (stopService) {

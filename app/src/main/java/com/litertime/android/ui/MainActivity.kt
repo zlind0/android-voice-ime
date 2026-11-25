@@ -124,7 +124,6 @@ import com.litertime.android.pipeline.PromptTemplates
 import com.litertime.android.pipeline.VoiceMode
 import com.litertime.android.settings.HandwritingInkColor
 import com.litertime.android.settings.ImeSettings
-import com.litertime.android.settings.LlmProviderType
 import com.litertime.android.storage.DownloadMirror
 import com.litertime.android.storage.DownloadState
 import com.litertime.android.storage.ModelCatalog
@@ -282,7 +281,7 @@ private enum class SettingsPage(val title: String) {
     INPUT("输入设置"),
     TRADITIONAL_INPUT("手写与键盘设置"),
     COLORS("色彩自定义"),
-    ONLINE("在线大模型接口"),
+    ONLINE("在线大模型设置"),
     PROMPTS("提示词编辑"),
     DEBUG("AI 请求调试与回放"),
 }
@@ -553,11 +552,17 @@ private fun LiteRtImeSettingsScreen(
         "默认深色马卡龙配色"
     }
 
-    val onlinePreview = buildString {
-        append(settings.llmProvider.displayName)
-        if (settings.llmProvider != LlmProviderType.LOCAL_LITERT) {
-            append(" · ")
-            append(settings.onlineModelName)
+    val onlinePreview = if (!settings.onlineLlmPreferred) {
+        "已关闭 · 使用本地 Gemma 4"
+    } else {
+        buildString {
+            append("优先在线")
+            if (settings.onlinePerModeModels) {
+                append(" · 分模式模型")
+            } else {
+                append(" · ")
+                append(settings.onlineModelName.ifBlank { "未填写模型" })
+            }
         }
     }
 
@@ -670,7 +675,7 @@ private fun LiteRtImeSettingsScreen(
                 )
                 SettingsHomeItem(
                     icon = { Icon(Icons.Rounded.Cloud, contentDescription = null) },
-                    title = "在线大模型接口",
+                    title = "在线大模型设置",
                     preview = onlinePreview,
                     onClick = { currentPage = SettingsPage.ONLINE },
                 )
@@ -1471,64 +1476,14 @@ private fun LiteRtImeSettingsScreen(
                 }
             }
 
-            // 5. Reserved Online LLM Settings
+            // 5. Online LLM settings
             if (currentPage == SettingsPage.ONLINE) {
-            SectionCard(title = "5. 在线大模型接口预留 (TextGenerationBackend)") {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Icon(Icons.Rounded.Cloud, contentDescription = null)
-                    Text(
-                        text = "与本地 Gemma 4 共用同一套 TextGenerationBackend 流式接口，未来无需改动 IME UI 与状态机即可接入在线大模型。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                LlmProviderType.entries.forEach { provider ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(
-                            selected = settings.llmProvider == provider,
-                            onClick = {
-                                settings = settingsStore.update { it.copy(llmProvider = provider) }
-                            },
-                        )
-                        Text(provider.displayName, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-                if (settings.llmProvider != LlmProviderType.LOCAL_LITERT) {
-                    OutlinedTextField(
-                        value = settings.onlineBaseUrl,
-                        onValueChange = { value ->
-                            settings = settingsStore.update { it.copy(onlineBaseUrl = value) }
-                        },
-                        label = { Text("API Base URL") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = settings.onlineModelName,
-                        onValueChange = { value ->
-                            settings = settingsStore.update { it.copy(onlineModelName = value) }
-                        },
-                        label = { Text("Model Name") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = settings.onlineApiKey,
-                        onValueChange = { value ->
-                            settings = settingsStore.update { it.copy(onlineApiKey = value) }
-                        },
-                        label = { Text("API Key") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
+                OnlineLlmSettingsPage(
+                    settings = settings,
+                    onUpdate = { transform ->
+                        settingsStore.update(transform).also { settings = it }
+                    },
+                )
             }
 
             // 6. Prompt editing (system prompt + per-mode user prompts)
@@ -1872,7 +1827,7 @@ private fun LiteRtImeSettingsScreen(
                     }
                     if (selectedLogEntry.backendType == "ONLINE_LLM") {
                         Text(
-                            text = "在线大模型通道目前为预留实现，回放只会返回占位错误。",
+                            text = "在线记录回放时会使用当前设置中的在线 Endpoint、API Key 与 Model。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

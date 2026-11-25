@@ -6,6 +6,10 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.inputmethodservice.InputMethodService
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -26,10 +30,10 @@ import com.litertime.android.audio.WavEncoder
 import com.litertime.android.handwriting.HandwritingPanelView
 import com.litertime.android.ime.traditional.EnglishKeyboardPanelView
 import com.litertime.android.inference.InferenceClient
+import com.litertime.android.inference.InferenceStatusState
 import com.litertime.android.inference.StreamListener
 import com.litertime.android.pipeline.VoiceMode
 import com.litertime.android.settings.ImeSettingsStore
-import com.litertime.android.settings.LlmProviderType
 import com.litertime.android.storage.ModelCatalog
 import com.litertime.android.ui.MainActivity
 import java.io.File
@@ -57,6 +61,25 @@ class LiteRtImeService : InputMethodService() {
     private lateinit var inferenceClient: InferenceClient
     private lateinit var rootContainer: ImeRootContainerView
     private var statusCollectJob: Job? = null
+    private var lastInferenceState: InferenceStatusState = InferenceStatusState()
+    private var networkCallbackRegistered: Boolean = false
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            mainHandler.post { refreshOnlineCloud() }
+        }
+
+        override fun onLost(network: Network) {
+            mainHandler.post { refreshOnlineCloud() }
+        }
+
+        override fun onCapabilitiesChanged(
+            network: Network,
+            networkCapabilities: NetworkCapabilities,
+        ) {
+            mainHandler.post { refreshOnlineCloud() }
+        }
+    }
 
     private val streamListener = object : StreamListener {
         override fun onToken(requestId: String, delta: String) {
@@ -110,12 +133,14 @@ class LiteRtImeService : InputMethodService() {
         inferenceClient = InferenceClient(this)
         inferenceClient.addListener(streamListener)
         inferenceClient.bind()
+        registerNetworkCallback()
     }
 
     override fun onDestroy() {
         cancelActiveRequest()
         audioCapture.cancel()
         statusCollectJob?.cancel()
+        unregisterNetworkCallback()
         if (::rootContainer.isInitialized) {
             rootContainer.handwritingPanel.release()
         }
@@ -336,14 +361,8 @@ class LiteRtImeService : InputMethodService() {
         statusCollectJob?.cancel()
         statusCollectJob = serviceScope.launch {
             inferenceClient.statusState.collectLatest { state ->
-                val settings = settingsStore().getSettings()
-                rootContainer.voiceOverlayView.updateLoadedState(
-                    isWhisperLoaded = state.asrLoaded,
-                    isGemmaLoaded = state.llmLoaded,
-                    isGemmaGpu = state.llmLoadedWithGpu,
-                    inferencePid = state.inferencePid,
-                    isOnlineMode = settings.llmProvider != LlmProviderType.LOCAL_LITERT,
-                )
+                lastInferenceState = state
+                applyVoiceOverlayState(state)
                 if (commitGuard.activeId() != null && state.statusText.isNotBlank()) {
                     rootContainer.voiceOverlayView.updateStatusBanner(state.statusText, cancellable = true)
                 }
@@ -409,6 +428,44 @@ class LiteRtImeService : InputMethodService() {
 
     private fun settingsStore(): ImeSettingsStore = (application as LiteRtImeApp).settingsStore
 
+    private fun registerNetworkCallback() {
+        if (networkCallbackRegistered) return
+        val manager = getSystemService(ConnectivityManager::class.java) ?: return
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        runCatching {
+            manager.registerNetworkCallback(request, networkCallback)
+            networkCallbackRegistered = true
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        if (!networkCallbackRegistered) return
+        val manager = getSystemService(ConnectivityManager::class.java)
+        runCatching { manager?.unregisterNetworkCallback(networkCallback) }
+        networkCallbackRegistered = false
+    }
+
+    private fun refreshOnlineCloud() {
+        applyVoiceOverlayState(lastInferenceState)
+    }
+
+    private fun applyVoiceOverlayState(state: InferenceStatusState) {
+        if (!::rootContainer.isInitialized) return
+        val settings = settingsStore().getSettings()
+        rootContainer.voiceOverlayView.updateLoadedState(
+            isWhisperLoaded = state.asrLoaded,
+            isGemmaLoaded = state.llmLoaded,
+            isGemmaGpu = state.llmLoadedWithGpu,
+            inferencePid = state.inferencePid,
+            isOnlineCloudVisible = settings.onlineLlmPreferred &&
+                NetworkStatus.isOnline(this) &&
+                !state.llmLoaded &&
+                !state.onlineFallbackActive,
+        )
+    }
+
     /** Mirrors the LLM model resolution used when dispatching a normal voice request. */
     private fun resolveLocalLlmModelId(): String {
         val app = application as LiteRtImeApp
@@ -438,6 +495,7 @@ class LiteRtImeService : InputMethodService() {
         if (::rootContainer.isInitialized) {
             rootContainer.applySettings(settingsStore().getSettings())
             rootContainer.englishKeyboardPanel.onStartInput(editorInfo)
+            refreshOnlineCloud()
         }
     }
 
@@ -497,6 +555,11 @@ class LiteRtImeService : InputMethodService() {
             RadialAction.CANCEL, RadialAction.NONE -> return
         }
 
+        val state = inferenceClient.statusState.value
+        val onlineUsable = settings.onlineLlmPreferred &&
+            !state.llmLoaded &&
+            NetworkStatus.isOnline(this)
+
         val backendType: String
         val modelId: String
         if (source == MicSource.WHISPER) {
@@ -507,9 +570,9 @@ class LiteRtImeService : InputMethodService() {
             } else {
                 storage.findFirstInstalledAsrId() ?: settings.activeAsrModelId
             }
-        } else if (settings.llmProvider != LlmProviderType.LOCAL_LITERT) {
+        } else if (onlineUsable) {
             backendType = "ONLINE_LLM"
-            modelId = settings.onlineModelName
+            modelId = settings.onlineConfigFor(mode).modelName
         } else {
             backendType = "LLM"
             modelId = resolveLocalLlmModelId()

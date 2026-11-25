@@ -134,7 +134,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     private var gemmaLoaded: Boolean = false
     private var gemmaLoadedWithGpu: Boolean = false
     private var inferencePid: Int = 0
-    private var onlineModeEnabled: Boolean = false
+    private var onlineCloudVisible: Boolean = false
 
     // Generation status banner
     private var statusMessage: String = ""
@@ -260,6 +260,10 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         color = PastelPalette.TEXT_ON_DARK_SKY
         typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
         textAlign = Paint.Align.LEFT
+    }
+    private val cloudPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.TEXT_ON_DARK_SKY
+        style = Paint.Style.FILL
     }
     private val leftBtnLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = PastelPalette.TEXT_ON_DARK_SKY
@@ -756,13 +760,13 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         isGemmaLoaded: Boolean,
         isGemmaGpu: Boolean,
         inferencePid: Int,
-        isOnlineMode: Boolean,
+        isOnlineCloudVisible: Boolean,
     ) {
         whisperLoaded = isWhisperLoaded
         gemmaLoaded = isGemmaLoaded
         gemmaLoadedWithGpu = isGemmaGpu
         this.inferencePid = inferencePid
-        onlineModeEnabled = isOnlineMode
+        onlineCloudVisible = isOnlineCloudVisible
         invalidate()
     }
 
@@ -1080,6 +1084,30 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         aiTextPaint.getTextBounds("AI", 0, 2, textBounds)
         val baseline = centerY + glyphHeight / 2f - textBounds.bottom
         canvas.drawText("AI", startX + glyphWidth + gap, baseline, aiTextPaint)
+
+        if (onlineCloudVisible && !isLoaded) {
+            val aiCenterX = startX + glyphWidth + gap + aiWidth / 2f
+            val radius = (glyphHeight * 0.22f).coerceIn(dp(3f), dp(5f))
+            val aiTop = baseline + textBounds.top
+            val cloudCenterY = (aiTop - radius * 1.2f)
+                .coerceAtLeast(rect.top + radius * 1.35f)
+            drawOnlineCloud(canvas, aiCenterX, cloudCenterY, radius)
+        }
+    }
+
+    private fun drawOnlineCloud(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
+        if (radius <= 0f) return
+        cloudPaint.color = PastelPalette.TEXT_ON_DARK_SKY
+        canvas.drawCircle(cx - radius * 0.75f, cy + radius * 0.12f, radius * 0.55f, cloudPaint)
+        canvas.drawCircle(cx, cy - radius * 0.25f, radius * 0.78f, cloudPaint)
+        canvas.drawCircle(cx + radius * 0.8f, cy + radius * 0.12f, radius * 0.5f, cloudPaint)
+        scratchRect.set(
+            cx - radius * 1.28f,
+            cy + radius * 0.05f,
+            cx + radius * 1.3f,
+            cy + radius * 0.72f,
+        )
+        canvas.drawRoundRect(scratchRect, radius * 0.34f, radius * 0.34f, cloudPaint)
     }
 
     private fun drawScaledMicGlyph(

@@ -9,15 +9,58 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.Properties
 
-enum class LlmProviderType(val displayName: String) {
-    LOCAL_LITERT("本地 LiteRT (Gemma 4)"),
-    ONLINE_OPENAI_COMPAT("在线 API (OpenAI 兼容 · 预留)"),
-    ONLINE_GEMINI("在线 API (Gemini · 预留)");
+/**
+ * The AI-mic actions that can each use their own online model. The plain [VoiceMode.WHISPER_RAW]
+ * entry is the "普通纠错" action of the AI mic; the Whisper mic never uses these profiles.
+ */
+enum class OnlineLlmModelProfile(
+    val displayName: String,
+    val voiceMode: VoiceMode,
+    val storageKey: String,
+) {
+    CORRECTION("语音纠错", VoiceMode.WHISPER_RAW, "Correction"),
+    POLISH("正式润色", VoiceMode.GEMMA_POLISH_FORMAL, "Polish"),
+    SCREENSHOT_CORRECTION(
+        "截屏纠错",
+        VoiceMode.GEMMA_SCREENSHOT_CORRECTION,
+        "ScreenshotCorrection",
+    ),
+    SCREENSHOT_INSTRUCTION(
+        "截屏指令",
+        VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION,
+        "ScreenshotInstruction",
+    );
 
     companion object {
-        fun fromId(value: String?): LlmProviderType =
-            entries.firstOrNull { it.name == value } ?: LOCAL_LITERT
+        fun fromVoiceMode(mode: VoiceMode): OnlineLlmModelProfile =
+            entries.firstOrNull { it.voiceMode == mode } ?: CORRECTION
     }
+}
+
+/** One profile's endpoint override. Blank fields fall back to the unified configuration. */
+data class OnlineLlmOverride(
+    val baseUrl: String = "",
+    val apiKey: String = "",
+    val modelName: String = "",
+) {
+    fun resolve(unified: ResolvedOnlineLlmConfig): ResolvedOnlineLlmConfig = ResolvedOnlineLlmConfig(
+        baseUrl = baseUrl.trim().ifBlank { unified.baseUrl },
+        apiKey = apiKey.trim().ifBlank { unified.apiKey },
+        modelName = modelName.trim().ifBlank { unified.modelName },
+    )
+
+    val isEmpty: Boolean
+        get() = baseUrl.isBlank() && apiKey.isBlank() && modelName.isBlank()
+}
+
+/** Fully resolved OpenAI-compatible endpoint used by both the settings UI and the backend. */
+data class ResolvedOnlineLlmConfig(
+    val baseUrl: String,
+    val apiKey: String,
+    val modelName: String,
+) {
+    val isConfigured: Boolean
+        get() = baseUrl.isNotBlank() && modelName.isNotBlank()
 }
 
 enum class HandwritingInkColor(val displayName: String, val argb: Int) {
@@ -43,10 +86,15 @@ data class ImeSettings(
     val voiceCascadeEnabled: Boolean = false,
     val whisperLanguage: String = "",
     val downloadMirror: DownloadMirror = DownloadMirror.HF_MIRROR,
-    val llmProvider: LlmProviderType = LlmProviderType.LOCAL_LITERT,
+    /** Prefer an OpenAI-compatible online model over the on-device Gemma 4 model. */
+    val onlineLlmPreferred: Boolean = false,
     val onlineBaseUrl: String = "https://api.openai.com/v1",
     val onlineApiKey: String = "",
     val onlineModelName: String = "gpt-4o-mini",
+    /** When enabled each AI-mic mode may override endpoint/key/model independently. */
+    val onlinePerModeModels: Boolean = false,
+    /** Endpoint overrides keyed by [OnlineLlmModelProfile]. Empty values use the unified config. */
+    val onlineOverrides: Map<OnlineLlmModelProfile, OnlineLlmOverride> = emptyMap(),
     /** When enabled, every AI request is persisted under `files/ai-request-logs/`. */
     val debugRequestLoggingEnabled: Boolean = false,
     /** When enabled, a sentence-final period in the generated text is dropped before committing. */
@@ -117,6 +165,37 @@ data class ImeSettings(
         const val MAX_RECENT_EMOJIS = 32
         private const val RECENT_EMOJI_SEPARATOR = "\u001F"
     }
+    /** The unified endpoint shared by every AI-mic mode unless an override is filled in. */
+    val onlineUnifiedConfig: ResolvedOnlineLlmConfig
+        get() = ResolvedOnlineLlmConfig(
+            baseUrl = onlineBaseUrl.trim(),
+            apiKey = onlineApiKey.trim(),
+            modelName = onlineModelName.trim(),
+        )
+
+    fun onlineConfigFor(mode: VoiceMode): ResolvedOnlineLlmConfig {
+        val unified = onlineUnifiedConfig
+        if (!onlinePerModeModels) return unified
+        val override = onlineOverrides[OnlineLlmModelProfile.fromVoiceMode(mode)] ?: return unified
+        return override.resolve(unified)
+    }
+
+    fun onlineOverride(profile: OnlineLlmModelProfile): OnlineLlmOverride =
+        onlineOverrides[profile] ?: OnlineLlmOverride()
+
+    fun withOnlineOverride(
+        profile: OnlineLlmModelProfile,
+        override: OnlineLlmOverride,
+    ): ImeSettings {
+        val updated = onlineOverrides.toMutableMap()
+        if (override.isEmpty) {
+            updated.remove(profile)
+        } else {
+            updated[profile] = override
+        }
+        return copy(onlineOverrides = updated)
+    }
+
     fun userPromptOverride(mode: VoiceMode): String = when (mode) {
         VoiceMode.WHISPER_RAW -> userPromptWhisperRaw
         VoiceMode.GEMMA_POLISH_FORMAL -> userPromptPolishFormal
@@ -162,6 +241,10 @@ class ImeSettingsStore(private val appFilesDir: File) {
         runCatching {
             FileInputStream(settingsFile).use { props.load(it) }
         }
+        // Migrate the old "provider radio" setting: any non-local provider meant online priority.
+        val legacyOnlinePreferred = props.getProperty("llmProvider")
+            ?.let { it != "LOCAL_LITERT" }
+            ?: false
         val loaded = ImeSettings(
             activeAsrModelId = props.getProperty("activeAsrModelId", "whisper-small"),
             activeLlmModelId = props.getProperty("activeLlmModelId", "gemma4-e2b"),
@@ -169,10 +252,19 @@ class ImeSettingsStore(private val appFilesDir: File) {
             voiceCascadeEnabled = props.getProperty("voiceCascadeEnabled", "false").toBoolean(),
             whisperLanguage = props.getProperty("whisperLanguage", ""),
             downloadMirror = DownloadMirror.fromId(props.getProperty("downloadMirror")),
-            llmProvider = LlmProviderType.fromId(props.getProperty("llmProvider")),
+            onlineLlmPreferred = props.getProperty("onlineLlmPreferred")?.toBoolean()
+                ?: legacyOnlinePreferred,
             onlineBaseUrl = props.getProperty("onlineBaseUrl", "https://api.openai.com/v1"),
             onlineApiKey = props.getProperty("onlineApiKey", ""),
             onlineModelName = props.getProperty("onlineModelName", "gpt-4o-mini"),
+            onlinePerModeModels = props.getProperty("onlinePerModeModels", "false").toBoolean(),
+            onlineOverrides = OnlineLlmModelProfile.entries.associateWith { profile ->
+                OnlineLlmOverride(
+                    baseUrl = props.getProperty("online${profile.storageKey}BaseUrl", ""),
+                    apiKey = props.getProperty("online${profile.storageKey}ApiKey", ""),
+                    modelName = props.getProperty("online${profile.storageKey}ModelName", ""),
+                )
+            }.filterValues { !it.isEmpty },
             debugRequestLoggingEnabled = props.getProperty("debugRequestLoggingEnabled", "false").toBoolean(),
             stripTrailingPeriod = props.getProperty("stripTrailingPeriod", "false").toBoolean(),
             systemPromptOverride = props.getProperty("promptSystem", ""),
@@ -229,10 +321,17 @@ class ImeSettingsStore(private val appFilesDir: File) {
             setProperty("voiceCascadeEnabled", settings.voiceCascadeEnabled.toString())
             setProperty("whisperLanguage", settings.whisperLanguage)
             setProperty("downloadMirror", settings.downloadMirror.name)
-            setProperty("llmProvider", settings.llmProvider.name)
+            setProperty("onlineLlmPreferred", settings.onlineLlmPreferred.toString())
             setProperty("onlineBaseUrl", settings.onlineBaseUrl)
             setProperty("onlineApiKey", settings.onlineApiKey)
             setProperty("onlineModelName", settings.onlineModelName)
+            setProperty("onlinePerModeModels", settings.onlinePerModeModels.toString())
+            OnlineLlmModelProfile.entries.forEach { profile ->
+                val override = settings.onlineOverrides[profile] ?: OnlineLlmOverride()
+                setProperty("online${profile.storageKey}BaseUrl", override.baseUrl)
+                setProperty("online${profile.storageKey}ApiKey", override.apiKey)
+                setProperty("online${profile.storageKey}ModelName", override.modelName)
+            }
             setProperty("debugRequestLoggingEnabled", settings.debugRequestLoggingEnabled.toString())
             setProperty("stripTrailingPeriod", settings.stripTrailingPeriod.toString())
             setProperty("promptSystem", settings.systemPromptOverride)
