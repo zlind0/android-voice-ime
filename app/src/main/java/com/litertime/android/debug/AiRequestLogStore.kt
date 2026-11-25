@@ -28,6 +28,9 @@ data class AiRequestLogEntry(
     val mode: String,
     val modelId: String,
     val modelDisplayName: String,
+    /** Endpoint/API key captured when an online request ran, so replay can reproduce it. */
+    val onlineBaseUrl: String = "",
+    val onlineApiKey: String = "",
     val systemPrompt: String,
     val userPrompt: String,
     val languageHint: String,
@@ -48,6 +51,13 @@ data class PlaygroundDraft(
     val systemPrompt: String,
     val userPrompt: String,
     val modelId: String,
+    /** Selected replay backend: "ASR", "LLM", or "ONLINE_LLM". */
+    val replayBackendType: String = "",
+    /** True when replay uses the custom cloud config below instead of the request-time one. */
+    val useCustomOnline: Boolean = false,
+    val customOnlineBaseUrl: String = "",
+    val customOnlineApiKey: String = "",
+    val customOnlineModelName: String = "",
 )
 
 data class ReplayInput(
@@ -109,6 +119,8 @@ class AiRequestLogStore(
         audioFile: File?,
         screenshotFile: File?,
         transcript: String? = null,
+        onlineBaseUrl: String = "",
+        onlineApiKey: String = "",
     ): RequestLogRecorder? = runCatching {
         val timestamp = System.currentTimeMillis()
         val id = "$timestamp-$requestId"
@@ -141,6 +153,8 @@ class AiRequestLogStore(
                 put("mode", mode)
                 put("modelId", modelId)
                 put("modelDisplayName", modelDisplayName)
+                put("onlineBaseUrl", onlineBaseUrl)
+                put("onlineApiKey", onlineApiKey)
                 put("systemPrompt", systemPrompt)
                 put("userPrompt", userPrompt)
                 put("languageHint", languageHint)
@@ -178,6 +192,11 @@ class AiRequestLogStore(
                     systemPrompt = obj.optString("systemPrompt", entry.systemPrompt),
                     userPrompt = obj.optString("userPrompt", entry.userPrompt),
                     modelId = obj.optString("modelId", entry.modelId),
+                    replayBackendType = obj.optString("replayBackendType", entry.backendType),
+                    useCustomOnline = obj.optBoolean("useCustomOnline", false),
+                    customOnlineBaseUrl = obj.optString("customOnlineBaseUrl", ""),
+                    customOnlineApiKey = obj.optString("customOnlineApiKey", ""),
+                    customOnlineModelName = obj.optString("customOnlineModelName", ""),
                 )
             }
         }
@@ -185,6 +204,7 @@ class AiRequestLogStore(
             systemPrompt = entry.systemPrompt,
             userPrompt = entry.userPrompt,
             modelId = entry.modelId,
+            replayBackendType = entry.backendType,
         )
     }
 
@@ -199,6 +219,11 @@ class AiRequestLogStore(
                     put("systemPrompt", draft.systemPrompt)
                     put("userPrompt", draft.userPrompt)
                     put("modelId", draft.modelId)
+                    put("replayBackendType", draft.replayBackendType)
+                    put("useCustomOnline", draft.useCustomOnline)
+                    put("customOnlineBaseUrl", draft.customOnlineBaseUrl)
+                    put("customOnlineApiKey", draft.customOnlineApiKey)
+                    put("customOnlineModelName", draft.customOnlineModelName)
                     put("updatedAt", System.currentTimeMillis())
                 }
                 writeJsonAtomically(File(dir, "playground.json"), obj)
@@ -251,6 +276,8 @@ class AiRequestLogStore(
             mode = meta.optString("mode", ""),
             modelId = meta.optString("modelId", ""),
             modelDisplayName = meta.optString("modelDisplayName", meta.optString("modelId", "")),
+            onlineBaseUrl = meta.optString("onlineBaseUrl", ""),
+            onlineApiKey = meta.optString("onlineApiKey", ""),
             systemPrompt = meta.optString("systemPrompt", ""),
             userPrompt = meta.optString("userPrompt", ""),
             languageHint = meta.optString("languageHint", ""),

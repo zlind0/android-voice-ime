@@ -1087,10 +1087,12 @@ class VoiceImeOverlayView @JvmOverloads constructor(
 
         if (onlineCloudVisible && !isLoaded) {
             val aiCenterX = startX + glyphWidth + gap + aiWidth / 2f
-            val radius = (glyphHeight * 0.22f).coerceIn(dp(3f), dp(5f))
-            val aiTop = baseline + textBounds.top
-            val cloudCenterY = (aiTop - radius * 1.2f)
-                .coerceAtLeast(rect.top + radius * 1.35f)
+            // The topmost cloud circle sits at cy - 1.03r. Align that edge with the
+            // microphone glyph's top edge so the cloud leaves breathing room below.
+            val radius = (glyphHeight * 0.2f).coerceIn(dp(2.8f), dp(4.5f))
+            val micTop = centerY - glyphHeight / 2f
+            val cloudCenterY = (micTop + radius * 1.03f)
+                .coerceAtLeast(rect.top + radius * 1.03f)
             drawOnlineCloud(canvas, aiCenterX, cloudCenterY, radius)
         }
     }

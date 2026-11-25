@@ -1,6 +1,8 @@
 package com.litertime.android.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -183,6 +185,209 @@ internal fun OnlineLlmSettingsPage(
                 )
             }
         }
+    }
+}
+
+/**
+ * Endpoint/key/model editor used by the debug replay screen. It is deliberately the same
+ * OpenAI-compatible filling/selection flow as the settings page, without the balance/test extras.
+ */
+@Composable
+internal fun OnlineLlmReplayConfigDialog(
+    initial: ResolvedOnlineLlmConfig,
+    onDismiss: () -> Unit,
+    onConfirm: (ResolvedOnlineLlmConfig) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var baseUrl by remember(initial) { mutableStateOf(initial.baseUrl) }
+    var apiKey by remember(initial) { mutableStateOf(initial.apiKey) }
+    var modelName by remember(initial) { mutableStateOf(initial.modelName) }
+    var apiKeyVisible by remember { mutableStateOf(false) }
+    var models by remember { mutableStateOf<List<String>>(emptyList()) }
+    var showModelPicker by remember { mutableStateOf(false) }
+    var modelsLoading by remember { mutableStateOf(false) }
+    var modelsError by remember { mutableStateOf<String?>(null) }
+    var validationError by remember { mutableStateOf<String?>(null) }
+
+    fun fetchModels() {
+        if (baseUrl.isBlank()) {
+            modelsError = "请先填写 Endpoint"
+            return
+        }
+        if (models.isNotEmpty()) {
+            showModelPicker = true
+            return
+        }
+        scope.launch {
+            modelsLoading = true
+            modelsError = null
+            runCatching { OnlineLlmApi.fetchModels(baseUrl, apiKey) }
+                .onSuccess { fetched ->
+                    if (fetched.isEmpty()) {
+                        modelsError = "接口没有返回可用模型"
+                    } else {
+                        models = fetched
+                        showModelPicker = true
+                    }
+                }
+                .onFailure { error -> modelsError = error.message ?: "获取模型失败" }
+            modelsLoading = false
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 620.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ),
+        ) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "其他云端大模型",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = "仅用于本次回放。Endpoint 与 API Key 不会写入应用设置。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = { value ->
+                        baseUrl = value
+                        models = emptyList()
+                        modelsError = null
+                        validationError = null
+                    },
+                    label = { Text("Endpoint") },
+                    placeholder = { Text("https://api.openai.com/v1") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { value ->
+                        apiKey = value
+                        models = emptyList()
+                        modelsError = null
+                        validationError = null
+                    },
+                    label = { Text("API Key") },
+                    placeholder = { Text("可留空") },
+                    singleLine = true,
+                    visualTransformation = if (apiKeyVisible) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    trailingIcon = {
+                        IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                            Icon(
+                                imageVector = if (apiKeyVisible) {
+                                    Icons.Rounded.VisibilityOff
+                                } else {
+                                    Icons.Rounded.Visibility
+                                },
+                                contentDescription = if (apiKeyVisible) "隐藏 API Key" else "显示 API Key",
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedTextField(
+                        value = modelName,
+                        onValueChange = { value ->
+                            modelName = value
+                            validationError = null
+                        },
+                        label = { Text("Model") },
+                        placeholder = { Text("填写或从接口获取") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    FilledTonalButton(
+                        onClick = ::fetchModels,
+                        enabled = !modelsLoading,
+                        colors = pastelTonalColors(),
+                    ) {
+                        Text(if (modelsLoading) "获取中…" else "获取模型")
+                    }
+                }
+                modelsError?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                validationError?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = onDismiss) { Text("取消") }
+                    FilledTonalButton(
+                        onClick = {
+                            val base = OnlineLlmApi.normalizeBaseUrl(baseUrl)
+                            when {
+                                base.isBlank() -> validationError = "请填写 Endpoint"
+                                modelName.isBlank() -> validationError = "请填写或选择 Model"
+                                else -> onConfirm(
+                                    ResolvedOnlineLlmConfig(
+                                        baseUrl = base,
+                                        apiKey = apiKey.trim(),
+                                        modelName = modelName.trim(),
+                                    ),
+                                )
+                            }
+                        },
+                        colors = pastelTonalColors(),
+                    ) {
+                        Text("使用此模型")
+                    }
+                }
+            }
+        }
+    }
+
+    if (showModelPicker) {
+        OnlineModelPickerDialog(
+            models = models,
+            loading = modelsLoading,
+            error = modelsError,
+            onRefresh = {
+                models = emptyList()
+                fetchModels()
+            },
+            onSelect = { selected ->
+                modelName = selected
+                validationError = null
+                showModelPicker = false
+            },
+            onDismiss = { showModelPicker = false },
+        )
     }
 }
 

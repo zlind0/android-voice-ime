@@ -48,7 +48,7 @@ class OnlineLlmBackend(
     }
 
     override fun generateStream(request: VoiceGenerationRequest): Flow<GenerationEvent> = flow {
-        val config = resolvedConfig(request.modelId, request.mode)
+        val config = request.onlineConfigOverride ?: resolvedConfig(request.modelId, request.mode)
         if (!config.isConfigured) {
             emit(GenerationEvent.FallbackToLocal("在线大模型尚未配置 Endpoint 或 Model"))
             return@flow

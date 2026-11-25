@@ -29,6 +29,7 @@ import com.litertime.android.pipeline.VoiceGenerationRequest
 import com.litertime.android.pipeline.VoiceMode
 import com.litertime.android.settings.ImeSettings
 import com.litertime.android.settings.ImeSettingsStore
+import com.litertime.android.settings.ResolvedOnlineLlmConfig
 import com.litertime.android.storage.ModelCatalog
 import com.litertime.android.storage.ModelStorage
 import com.litertime.android.ui.MainActivity
@@ -162,12 +163,25 @@ class InferenceService : Service() {
             }
             val origin = extra.optString("origin", "ime")
             val replayOf = extra.optString("replayOf", "")
+            val onlineConfigOverride = if (
+                extra.has("onlineBaseUrl") || extra.has("onlineApiKey") || extra.has("onlineModelName")
+            ) {
+                ResolvedOnlineLlmConfig(
+                    baseUrl = extra.optString("onlineBaseUrl", ""),
+                    apiKey = extra.optString("onlineApiKey", ""),
+                    modelName = extra.optString("onlineModelName", "").ifBlank { id },
+                )
+            } else {
+                null
+            }
 
             val settings = settingsStore.getSettings()
+            val effectiveOnlineConfig =
+                onlineConfigOverride ?: settings.onlineConfigFor(voiceMode)
             val modelDisplayName = when (type) {
                 "ASR" -> ModelCatalog.findAsr(id)?.displayName ?: id
                 "LLM" -> ModelCatalog.findLlm(id)?.displayName ?: id
-                else -> settings.onlineConfigFor(voiceMode).modelName.ifBlank { id }
+                else -> effectiveOnlineConfig.modelName.ifBlank { id }
             }
             val job = serviceScope.launch {
                 // Voice cascade: Whisper/ASR transcribes first, the LLM only ever sees text.
@@ -232,6 +246,8 @@ class InferenceService : Service() {
                         audioFile = audioFile,
                         screenshotFile = imageFile,
                         transcript = transcript,
+                        onlineBaseUrl = if (type == "ONLINE_LLM") effectiveOnlineConfig.baseUrl else "",
+                        onlineApiKey = if (type == "ONLINE_LLM") effectiveOnlineConfig.apiKey else "",
                     )
                 } else {
                     null
@@ -250,6 +266,7 @@ class InferenceService : Service() {
                                 userPromptIsTranscript = transcriptAsUserPrompt,
                                 systemPrompt = requestSystemPrompt,
                                 userPrompt = requestUserPrompt,
+                                onlineConfigOverride = onlineConfigOverride,
                             ),
                             recorder = recorder,
                         )

@@ -124,6 +124,7 @@ import com.litertime.android.pipeline.PromptTemplates
 import com.litertime.android.pipeline.VoiceMode
 import com.litertime.android.settings.HandwritingInkColor
 import com.litertime.android.settings.ImeSettings
+import com.litertime.android.settings.ResolvedOnlineLlmConfig
 import com.litertime.android.storage.DownloadMirror
 import com.litertime.android.storage.DownloadState
 import com.litertime.android.storage.ModelCatalog
@@ -333,6 +334,12 @@ private fun LiteRtImeSettingsScreen(
     var draftSystemPrompt by rememberSaveable { mutableStateOf("") }
     var draftUserPrompt by rememberSaveable { mutableStateOf("") }
     var draftModelId by rememberSaveable { mutableStateOf("") }
+    var draftReplayBackendType by rememberSaveable { mutableStateOf("") }
+    var draftUseCustomOnline by rememberSaveable { mutableStateOf(false) }
+    var draftCustomOnlineBaseUrl by rememberSaveable { mutableStateOf("") }
+    var draftCustomOnlineApiKey by rememberSaveable { mutableStateOf("") }
+    var draftCustomOnlineModelName by rememberSaveable { mutableStateOf("") }
+    var showReplayOnlineDialog by remember { mutableStateOf(false) }
     var loadedDraftId by remember { mutableStateOf<String?>(null) }
 
     val inferenceState by inferenceClient.statusState.collectAsState()
@@ -398,19 +405,40 @@ private fun LiteRtImeSettingsScreen(
             draftSystemPrompt = draft.systemPrompt
             draftUserPrompt = draft.userPrompt
             draftModelId = draft.modelId
+            draftReplayBackendType = draft.replayBackendType.ifBlank { entry.backendType }
+            draftUseCustomOnline = draft.useCustomOnline
+            draftCustomOnlineBaseUrl = draft.customOnlineBaseUrl
+            draftCustomOnlineApiKey = draft.customOnlineApiKey
+            draftCustomOnlineModelName = draft.customOnlineModelName
             loadedDraftId = id
         }
-        snapshotFlow { Triple(draftSystemPrompt, draftUserPrompt, draftModelId) }
+        snapshotFlow {
+            listOf(
+                draftSystemPrompt,
+                draftUserPrompt,
+                draftModelId,
+                draftReplayBackendType,
+                draftUseCustomOnline.toString(),
+                draftCustomOnlineBaseUrl,
+                draftCustomOnlineApiKey,
+                draftCustomOnlineModelName,
+            )
+        }
             .drop(1)
-            .collectLatest { (systemPrompt, userPrompt, modelId) ->
+            .collectLatest { values ->
                 delay(350)
                 withContext(Dispatchers.IO) {
                     logStore.saveDraft(
                         id,
                         PlaygroundDraft(
-                            systemPrompt = systemPrompt,
-                            userPrompt = userPrompt,
-                            modelId = modelId,
+                            systemPrompt = values[0],
+                            userPrompt = values[1],
+                            modelId = values[2],
+                            replayBackendType = values[3],
+                            useCustomOnline = values[4].toBoolean(),
+                            customOnlineBaseUrl = values[5],
+                            customOnlineApiKey = values[6],
+                            customOnlineModelName = values[7],
                         ),
                     )
                 }
@@ -1799,37 +1827,157 @@ private fun LiteRtImeSettingsScreen(
                     }
 
                     Text("回放模型", style = MaterialTheme.typography.labelLarge)
-                    val candidateModels = if (selectedLogEntry.backendType == "ASR") {
+                    val isAsrLog = selectedLogEntry.backendType == "ASR"
+                    val replayMode = runCatching { VoiceMode.valueOf(selectedLogEntry.mode) }
+                        .getOrDefault(VoiceMode.WHISPER_RAW)
+                    val currentOnlineConfig = settings.onlineConfigFor(replayMode)
+                    val loggedOnlineConfig = if (selectedLogEntry.backendType == "ONLINE_LLM") {
+                        ResolvedOnlineLlmConfig(
+                            baseUrl = selectedLogEntry.onlineBaseUrl.ifBlank {
+                                currentOnlineConfig.baseUrl
+                            },
+                            apiKey = if (selectedLogEntry.onlineBaseUrl.isNotBlank()) {
+                                selectedLogEntry.onlineApiKey
+                            } else {
+                                currentOnlineConfig.apiKey
+                            },
+                            modelName = selectedLogEntry.modelId.ifBlank {
+                                currentOnlineConfig.modelName
+                            },
+                        )
+                    } else {
+                        currentOnlineConfig
+                    }
+                    val customOnlineConfig = ResolvedOnlineLlmConfig(
+                        baseUrl = draftCustomOnlineBaseUrl.ifBlank { loggedOnlineConfig.baseUrl },
+                        apiKey = if (draftCustomOnlineBaseUrl.isNotBlank()) {
+                            draftCustomOnlineApiKey
+                        } else {
+                            loggedOnlineConfig.apiKey
+                        },
+                        modelName = draftCustomOnlineModelName.ifBlank {
+                            loggedOnlineConfig.modelName
+                        },
+                    )
+                    val replayBackendSelection = draftReplayBackendType
+                        .ifBlank { selectedLogEntry.backendType }
+                    val onlineReplaySelected = replayBackendSelection == "ONLINE_LLM"
+                    val replayOnlineConfig = if (draftUseCustomOnline) {
+                        customOnlineConfig
+                    } else {
+                        loggedOnlineConfig
+                    }
+                    val replayBackend = when {
+                        isAsrLog -> "ASR"
+                        onlineReplaySelected -> "ONLINE_LLM"
+                        else -> "LLM"
+                    }
+                    val replayModelId = when {
+                        isAsrLog -> draftModelId
+                        replayBackend == "ONLINE_LLM" -> replayOnlineConfig.modelName
+                        else -> draftModelId
+                    }
+                    val requestOnlineLabel = selectedLogEntry.modelDisplayName
+                        .ifBlank { selectedLogEntry.modelId }
+                        .ifBlank { currentOnlineConfig.modelName }
+                        .ifBlank { "请求时在线模型" }
+                    val candidateModels = if (isAsrLog) {
                         ModelCatalog.asrModels.map { it.id to it.displayName }
                     } else {
                         ModelCatalog.llmModels.map { it.id to it.displayName }
                     }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        candidateModels.forEach { (modelId, displayName) ->
-                            val installed = if (selectedLogEntry.backendType == "ASR") {
-                                ModelCatalog.findAsr(modelId)?.let { storage.isAsrInstalled(it) } ?: false
-                            } else {
-                                ModelCatalog.findLlm(modelId)?.let { storage.isLlmInstalled(it) } ?: false
+
+                    if (isAsrLog) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            candidateModels.forEach { (modelId, displayName) ->
+                                val installed = ModelCatalog.findAsr(modelId)
+                                    ?.let { storage.isAsrInstalled(it) } ?: false
+                                PastelFilterChip(
+                                    selected = draftModelId == modelId,
+                                    onClick = {
+                                        draftReplayBackendType = "ASR"
+                                        draftModelId = modelId
+                                    },
+                                    label = {
+                                        Text(if (installed) displayName else "$displayName (未安装)")
+                                    },
+                                )
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "云端模型",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            if (selectedLogEntry.backendType == "ONLINE_LLM") {
+                                PastelFilterChip(
+                                    selected = onlineReplaySelected && !draftUseCustomOnline,
+                                    onClick = {
+                                        draftReplayBackendType = "ONLINE_LLM"
+                                        draftUseCustomOnline = false
+                                    },
+                                    label = { Text(requestOnlineLabel) },
+                                )
                             }
                             PastelFilterChip(
-                                selected = draftModelId == modelId,
-                                onClick = { draftModelId = modelId },
+                                selected = onlineReplaySelected && draftUseCustomOnline,
+                                onClick = { showReplayOnlineDialog = true },
                                 label = {
-                                    Text(if (installed) displayName else "$displayName (未安装)")
+                                    Text(
+                                        draftCustomOnlineModelName.ifBlank {
+                                            "其他云端大模型"
+                                        },
+                                    )
                                 },
                             )
                         }
-                    }
-                    if (selectedLogEntry.backendType == "ONLINE_LLM") {
                         Text(
-                            text = "在线记录回放时会使用当前设置中的在线 Endpoint、API Key 与 Model。",
+                            text = "本地模型",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            candidateModels.forEach { (modelId, displayName) ->
+                                val installed = ModelCatalog.findLlm(modelId)
+                                    ?.let { storage.isLlmInstalled(it) } ?: false
+                                PastelFilterChip(
+                                    selected = !onlineReplaySelected && draftModelId == modelId,
+                                    onClick = {
+                                        draftReplayBackendType = "LLM"
+                                        draftModelId = modelId
+                                    },
+                                    label = {
+                                        Text(if (installed) displayName else "$displayName (未安装)")
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    if (!isAsrLog && onlineReplaySelected) {
+                        Text(
+                            text = "回放将使用 ${replayOnlineConfig.modelName} · " +
+                                replayOnlineConfig.baseUrl,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                     TextButton(
@@ -1837,9 +1985,37 @@ private fun LiteRtImeSettingsScreen(
                             draftSystemPrompt = selectedLogEntry.systemPrompt
                             draftUserPrompt = selectedLogEntry.userPrompt
                             draftModelId = selectedLogEntry.modelId
+                            draftReplayBackendType = selectedLogEntry.backendType
+                            draftUseCustomOnline = false
+                            draftCustomOnlineBaseUrl = ""
+                            draftCustomOnlineApiKey = ""
+                            draftCustomOnlineModelName = ""
+                            showReplayOnlineDialog = false
                         },
                     ) {
                         Text("恢复原始 Prompt 与模型")
+                    }
+                    if (showReplayOnlineDialog && !isAsrLog) {
+                        val initialOnlineConfig =
+                            if (draftCustomOnlineBaseUrl.isNotBlank() ||
+                                draftCustomOnlineModelName.isNotBlank()
+                            ) {
+                                customOnlineConfig
+                            } else {
+                                loggedOnlineConfig
+                            }
+                        OnlineLlmReplayConfigDialog(
+                            initial = initialOnlineConfig,
+                            onDismiss = { showReplayOnlineDialog = false },
+                            onConfirm = { config ->
+                                draftCustomOnlineBaseUrl = config.baseUrl
+                                draftCustomOnlineApiKey = config.apiKey
+                                draftCustomOnlineModelName = config.modelName
+                                draftUseCustomOnline = true
+                                draftReplayBackendType = "ONLINE_LLM"
+                                showReplayOnlineDialog = false
+                            },
+                        )
                     }
 
                     val replayVisible = playgroundRunState.sourceLogId == selectedLogEntry.id
@@ -1866,21 +2042,26 @@ private fun LiteRtImeSettingsScreen(
                                     playgroundRunState.start(requestId, selectedLogEntry.id)
                                     val extraJson = JSONObject().apply {
                                         put("language", selectedLogEntry.languageHint)
-                                        if (selectedLogEntry.backendType != "ASR") {
+                                        if (replayBackend != "ASR") {
                                             put("systemPrompt", draftSystemPrompt)
                                             put("userPrompt", draftUserPrompt)
                                             if (selectedLogEntry.transcript.isNotBlank()) {
                                                 put("asrTranscript", selectedLogEntry.transcript)
                                             }
                                         }
+                                        if (replayBackend == "ONLINE_LLM") {
+                                            put("onlineBaseUrl", replayOnlineConfig.baseUrl)
+                                            put("onlineApiKey", replayOnlineConfig.apiKey)
+                                            put("onlineModelName", replayOnlineConfig.modelName)
+                                        }
                                         put("origin", "playground")
                                         put("replayOf", selectedLogEntry.id)
                                     }.toString()
                                     val dispatched = inferenceClient.runRequest(
                                         requestId = requestId,
-                                        backendType = selectedLogEntry.backendType,
+                                        backendType = replayBackend,
                                         mode = selectedLogEntry.mode,
-                                        modelId = draftModelId,
+                                        modelId = replayModelId,
                                         audioWavFile = prepared.audioFile,
                                         screenshotFile = prepared.screenshotFile,
                                         extraJson = extraJson,
@@ -1896,7 +2077,7 @@ private fun LiteRtImeSettingsScreen(
                                 if (playgroundRunState.running && replayVisible) {
                                     "推理中…"
                                 } else {
-                                    "用当前设置重新请求"
+                                    "用所选模型重新请求"
                                 },
                             )
                         }

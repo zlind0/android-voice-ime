@@ -1,5 +1,6 @@
 package com.litertime.android.pipeline
 
+import com.litertime.android.settings.ResolvedOnlineLlmConfig
 import java.io.File
 import kotlinx.coroutines.flow.Flow
 
@@ -31,6 +32,8 @@ data class VoiceGenerationRequest(
     val systemPrompt: String? = null,
     /** Optional override for the mode's user prompt, used by the debug playground. */
     val userPrompt: String? = null,
+    /** Optional endpoint override for a replayed online request. */
+    val onlineConfigOverride: ResolvedOnlineLlmConfig? = null,
 )
 
 sealed interface GenerationEvent {
