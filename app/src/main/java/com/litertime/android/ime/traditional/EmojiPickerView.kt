@@ -223,7 +223,7 @@ class EmojiPickerView(
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 backspaceHeld = true
-                v.background = keyBackground(PastelPalette.SURFACE_PRESSED, dpF(8.5f))
+                v.background = keyBackground(PastelPalette.SURFACE_BACKSPACE_PRESSED, dpF(8.5f))
                 triggerHaptic()
                 listener?.onBackspaceClick()
                 mainHandler.removeCallbacks(backspaceRepeatRunnable)

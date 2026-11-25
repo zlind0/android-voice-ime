@@ -115,6 +115,7 @@ import com.litertime.android.debug.AiRequestLogStore
 import com.litertime.android.debug.PlaygroundDraft
 import com.litertime.android.inference.InferenceClient
 import com.litertime.android.inference.StreamListener
+import com.litertime.android.pipeline.LiteRtGemmaBackend
 import com.litertime.android.pipeline.PromptTemplates
 import com.litertime.android.pipeline.VoiceMode
 import com.litertime.android.settings.HandwritingInkColor
@@ -874,10 +875,12 @@ private fun LiteRtImeSettingsScreen(
                     Column(Modifier.weight(1f)) {
                         Text("Gemma 4 使用 GPU 加速", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = if (storage.hasGpuCrashMarker(BuildConfig.VERSION_CODE)) {
+                            text = if (LiteRtGemmaBackend.ENABLE_GPU_CRASH_MARKER &&
+                                storage.hasGpuCrashMarker(BuildConfig.VERSION_CODE)
+                            ) {
                                 "检测到当前版本 GPU 崩溃标记，当前自动回退 CPU"
                             } else {
-                                "文本/视觉优先走 GPU (OpenCL/ML Drift)，音频编码走 CPU"
+                                "文本/视觉优先走 GPU (OpenCL/ML Drift)，失败时仅本次回退 CPU；音频编码走 CPU"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -890,7 +893,9 @@ private fun LiteRtImeSettingsScreen(
                         },
                     )
                 }
-                if (storage.hasGpuCrashMarker(BuildConfig.VERSION_CODE)) {
+                if (LiteRtGemmaBackend.ENABLE_GPU_CRASH_MARKER &&
+                    storage.hasGpuCrashMarker(BuildConfig.VERSION_CODE)
+                ) {
                     TextButton(
                         onClick = {
                             storage.clearGpuCrashMarker()
@@ -955,6 +960,7 @@ private fun LiteRtImeSettingsScreen(
                         selected = settings.activeLlmModelId == spec.id,
                         installed = installed,
                         loaded = inferenceState.llmLoaded && inferenceState.llmModelId == spec.id,
+                        loadedBadgeColor = Color(PastelPalette.PINK_LIGHT),
                         downloadState = dlState,
                         onSelect = {
                             settings = settingsStore.update { it.copy(activeLlmModelId = spec.id) }
@@ -2071,6 +2077,7 @@ private fun ModelItemRow(
     selected: Boolean,
     installed: Boolean,
     loaded: Boolean = false,
+    loadedBadgeColor: Color = Color(PastelPalette.SKY_BLUE),
     downloadState: DownloadState,
     onSelect: () -> Unit,
     onDownload: () -> Unit,
@@ -2102,7 +2109,7 @@ private fun ModelItemRow(
                             color = Color(PastelPalette.INK_ON_PASTEL),
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(Color(PastelPalette.SKY_BLUE))
+                                .background(loadedBadgeColor)
                                 .padding(horizontal = 6.dp, vertical = 2.dp),
                         )
                     } else if (installed) {

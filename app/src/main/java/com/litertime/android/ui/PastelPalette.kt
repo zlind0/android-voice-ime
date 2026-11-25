@@ -25,6 +25,7 @@ object PastelPalette {
     val SURFACE_ICON_BADGE = 0xFF1F3A44.toInt()
     val SURFACE_PRESSED = 0xFF26444F.toInt()
     val SURFACE_KEY_PRESSED = 0xFF2B4752.toInt()
+    val SURFACE_BACKSPACE_PRESSED = 0xFF5C2933.toInt()
     val SURFACE_SHIFT_ACTIVE = 0xFF264957.toInt()
     val SURFACE_POPUP = 0xFF26424D.toInt()
 

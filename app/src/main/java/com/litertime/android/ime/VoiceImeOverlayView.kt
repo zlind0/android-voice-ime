@@ -252,6 +252,10 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         color = PastelPalette.PINK_PRESSED
         style = Paint.Style.FILL
     }
+    private val backspaceBtnPressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.SURFACE_BACKSPACE_PRESSED
+        style = Paint.Style.FILL
+    }
     private val aiTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = PastelPalette.TEXT_ON_DARK_SKY
         typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
@@ -845,7 +849,11 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         drawHandwritingButtonContent(canvas, handwritingBtnRect, isActive = zhActive)
 
         // Right column/pair: Backspace & Enter
-        val bsPaint = if (idleTouchTarget == IdleTouchTarget.BACKSPACE) sideBtnPressedPaint else sideBtnPaint
+        val bsPaint = if (idleTouchTarget == IdleTouchTarget.BACKSPACE) {
+            backspaceBtnPressedPaint
+        } else {
+            sideBtnPaint
+        }
         canvas.drawRoundRect(backspaceBtnRect, sideCorner, sideCorner, bsPaint)
         drawBackspaceIcon(canvas, backspaceBtnRect.centerX(), backspaceBtnRect.centerY())
 
@@ -876,8 +884,8 @@ class VoiceImeOverlayView @JvmOverloads constructor(
 
         val gemmaPressed = isRadialExpanded && activeSource == MicSource.GEMMA
         val gemmaBg = when {
-            gemmaLoaded && gemmaPressed -> micLoadedPressedPaint
-            gemmaLoaded -> micLoadedPaint
+            gemmaLoaded && gemmaPressed -> enterBtnPressedPaint
+            gemmaLoaded -> enterBtnPaint
             gemmaPressed -> micInactivePressedPaint
             else -> micInactivePaint
         }

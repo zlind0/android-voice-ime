@@ -29,14 +29,12 @@ All UI work across the IME views and Compose Settings screens MUST follow the **
   - QWERTY / handwriting / picker modifier keys: `#162930` (`SURFACE_MOD_KEY`)
   - Handwriting writing pad: `#172A31` (`SURFACE_PAD`)
   - Settings cards (`surfaceContainerLow`): `#172B33` (`SURFACE_CARD`)
-- **Active Modes & Loaded Models (Light Pastel Sky Blue `#ADDDEF`):**
-  - Selected keyboard input modes (`En` QWERTY, `中` Chinese handwriting)
-  - Loaded speech/AI models (both normal Whisper mic and AI mic when loaded, plus Settings `"已加载"` badge)
-  - Selected FilterChips, active Emoji category tab, top-1 auto-commit handwriting candidate, Caps Lock key, radial floating knob, and active GPU tray chips
-  - Pressed state: `#96CDE2` (`SKY_BLUE_PRESSED`)
-- **Enter & Done Keys (Light Pastel Pink `#EDBDC6`):**
-  - Top voice bar Enter button and QWERTY/Symbols/Symbols2 `KeyKind.ENTER` (`↵`, `Done`, `Go`, `Next`, `Search`, `Send`)
-  - Pressed state: `#DFACB6` (`PINK_PRESSED`)
+- **Active Modes & Loaded Models:**
+  - **Light Pastel Sky Blue (`#ADDDEF`):** Selected keyboard input modes (`En` QWERTY, `中` Chinese handwriting), loaded normal Whisper mic (and Settings ASR `"已加载"` badge), selected FilterChips, active Emoji category tab, top-1 auto-commit handwriting candidate, Caps Lock key, radial floating knob, and active GPU tray chips. Pressed state: `#96CDE2` (`SKY_BLUE_PRESSED`).
+  - **Light Pastel Pink (`#EDBDC6`):** Loaded AI (Gemma 4) mic button (and Settings LLM `"已加载"` badge), matching the Enter / Done action keys. Pressed state: `#DFACB6` (`PINK_PRESSED`).
+- **Enter, Done & Backspace Actions (Pink Hue `#F5A9B8`):**
+  - Top voice bar Enter button and QWERTY/Symbols/Symbols2 `KeyKind.ENTER` (`↵`, `Done`, `Go`, `Next`, `Search`, `Send`): `#EDBDC6` (`PINK_LIGHT`), pressed `#DFACB6` (`PINK_PRESSED`).
+  - Backspace keys (top voice bar, QWERTY, Chinese punctuation, Emoji picker) pressed state: dark pastel pink `#5C2933` (`SURFACE_BACKSPACE_PRESSED`, H=348.2°).
 - **Cancel / Destructive Actions:** Pastel rose `#F68BA0` (`ROSE_DANGER`).
 
 ### 3. Neutral Foreground Text & Icon Rules (No Color Tinting)
@@ -61,8 +59,9 @@ All UI work across the IME views and Compose Settings screens MUST follow the **
 | `SURFACE_SIDE_BTN` / `SURFACE_MIC_INACTIVE` | `#1A3038` / `#1B323B` | H=196.6° · Inactive toggles & unloaded mics |
 | `SURFACE_CHAR_KEY` | `#1C3139` | H=196.6° · QWERTY character & space keys |
 | `SURFACE_CHIP_IDLE` | `#1E3842` | H=196.6° · Unselected chips & tonal buttons |
-| `SKY_BLUE` / `SKY_BLUE_PRESSED` | `#ADDDEF` / `#96CDE2` | H=196.6° · Active modes, loaded models, selected chips |
-| `PINK_LIGHT` / `PINK_PRESSED` | `#EDBDC6` / `#DFACB6` | H=348.2° · Enter & Done action keys |
+| `SKY_BLUE` / `SKY_BLUE_PRESSED` | `#ADDDEF` / `#96CDE2` | H=196.6° · Active modes, loaded Whisper, selected chips |
+| `PINK_LIGHT` / `PINK_PRESSED` | `#EDBDC6` / `#DFACB6` | H=348.2° · Enter/Done keys & loaded AI mic |
+| `SURFACE_BACKSPACE_PRESSED` | `#5C2933` | H=348.2° · Backspace key pressed state |
 | `ROSE_DANGER` | `#F68BA0` | H=348.2° · Cancel & destructive actions |
 | `TEXT_PRIMARY` | `#FFFFFF` | Neutral pure white on dark surfaces |
 | `TEXT_MOD_KEY` / `TEXT_MUTED` | `#D4D4D8` / `#9CA3AF` | Neutral light gray secondary text |

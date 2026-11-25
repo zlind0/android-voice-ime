@@ -82,14 +82,15 @@ class LiteRtGemmaBackend(
             unloadInternal()
 
             val settings = settingsStore.getSettings()
-            val gpuCrashDetected = modelStorage.hasGpuCrashMarker(BuildConfig.VERSION_CODE)
+            val gpuCrashDetected = ENABLE_GPU_CRASH_MARKER &&
+                modelStorage.hasGpuCrashMarker(BuildConfig.VERSION_CODE)
             val tryGpu = forceGpu || (settings.useGpuForLlm && !gpuCrashDetected)
             val cacheDir = modelStorage.litertCacheDir().absolutePath
 
             Log.i(TAG, "Loading ${spec.id}: tryGpu=$tryGpu, gpuCrashDetected=$gpuCrashDetected, cacheDir=$cacheDir")
             onStatus("正在加载 ${spec.displayName} (${if (tryGpu) "GPU" else "CPU"})...")
 
-            if (tryGpu) {
+            if (ENABLE_GPU_CRASH_MARKER && tryGpu) {
                 modelStorage.writeGpuCrashMarker(Process.myPid(), BuildConfig.VERSION_CODE)
             }
 
@@ -111,7 +112,7 @@ class LiteRtGemmaBackend(
             loadedModelId = spec.id
             loadedWithGpu = loadedEngine.engineConfig.backend is Backend.GPU
             Log.i(TAG, "Engine initialized: model=${spec.id}, loadedWithGpu=$loadedWithGpu")
-            if (!loadedWithGpu && tryGpu) {
+            if (ENABLE_GPU_CRASH_MARKER && !loadedWithGpu && tryGpu) {
                 modelStorage.clearGpuCrashMarker()
             }
             onStatus("${spec.displayName} 已就绪 (${if (loadedWithGpu) "GPU" else "CPU"})")
@@ -249,7 +250,7 @@ class LiteRtGemmaBackend(
                     }
 
                     override fun onDone() {
-                        if (loadedWithGpu) {
+                        if (ENABLE_GPU_CRASH_MARKER && loadedWithGpu) {
                             modelStorage.clearGpuCrashMarker()
                         }
                         closeConversationAsync()
@@ -308,5 +309,10 @@ class LiteRtGemmaBackend(
         engine = null
         loadedModelId = null
         loadedWithGpu = false
+    }
+
+    companion object {
+        /** Temporarily disabled so GPU toggle always attempts GPU first and falls back to CPU per load. */
+        internal const val ENABLE_GPU_CRASH_MARKER = false
     }
 }

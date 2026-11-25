@@ -93,6 +93,10 @@ class QwertyKeyboardView(context: Context) : View(context) {
         color = PastelPalette.SURFACE_KEY_PRESSED
         style = Paint.Style.FILL
     }
+    private val backspacePressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.SURFACE_BACKSPACE_PRESSED
+        style = Paint.Style.FILL
+    }
     private val shiftActivePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = PastelPalette.SURFACE_SHIFT_ACTIVE
         style = Paint.Style.FILL
@@ -280,6 +284,8 @@ class QwertyKeyboardView(context: Context) : View(context) {
             val fillPaint = when {
                 kr.spec.kind == EnglishKeyboardLayout.KeyKind.ENTER ->
                     if (isPressed) enterKeyPressedPaint else enterKeyPaint
+                kr.spec.kind == EnglishKeyboardLayout.KeyKind.BACKSPACE && isPressed ->
+                    backspacePressedPaint
                 kr.spec.kind == EnglishKeyboardLayout.KeyKind.SHIFT &&
                     shiftState == EnglishKeyboardLayout.ShiftState.CAPS_LOCK ->
                     if (isPressed) capsLockPressedPaint else capsLockBgPaint
