@@ -103,7 +103,9 @@ class EnglishKeyboardPanelView(context: Context) : FrameLayout(context) {
 
     fun applySettings(newSettings: ImeSettings) {
         settings = newSettings
+        setBackgroundColor(PastelPalette.BG_CANVAS)
         qwertyView.applySettings(newSettings)
+        emojiView.applyPalette()
         emojiView.setHapticEnabled(newSettings.keyboardHapticEnabled)
         emojiView.setRecentEmojis(newSettings.recentEmojiList())
     }

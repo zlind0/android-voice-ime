@@ -32,6 +32,9 @@ class ImeSettingsStoreTest {
                     keyboardKeyPopupEnabled = false,
                     keyboardAutoCapsEnabled = false,
                     keyboardDoubleSpacePeriod = false,
+                    accentColor1 = 0xFF88BBDD.toInt(),
+                    accentColor2 = 0xFFEE99AA.toInt(),
+                    backgroundColor = 0xFF101820.toInt(),
                     recentEmojis = "😀\u001F🎉",
                 ),
             )
@@ -51,6 +54,10 @@ class ImeSettingsStoreTest {
             assertFalse(reloaded.keyboardKeyPopupEnabled)
             assertFalse(reloaded.keyboardAutoCapsEnabled)
             assertFalse(reloaded.keyboardDoubleSpacePeriod)
+            assertEquals(0xFF88BBDD.toInt(), reloaded.accentColor1)
+            assertEquals(0xFFEE99AA.toInt(), reloaded.accentColor2)
+            assertEquals(0xFF101820.toInt(), reloaded.backgroundColor)
+            assertTrue(reloaded.hasCustomKeyboardColors)
             assertEquals(listOf("😀", "🎉"), reloaded.recentEmojiList())
         } finally {
             dir.deleteRecursively()

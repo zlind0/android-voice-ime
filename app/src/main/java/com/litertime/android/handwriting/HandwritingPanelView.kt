@@ -85,6 +85,14 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
     private val recognizeRunnable = Runnable { runLiveRecognition() }
     private val autoCommitRunnable = Runnable { onAutoCommitTimerFired() }
 
+    private data class ToolbarButtonStyle(
+        val view: TextView,
+        val isModifier: Boolean,
+        val isMutedText: Boolean,
+    )
+
+    private val toolbarButtons = mutableListOf<ToolbarButtonStyle>()
+
     init {
         setBackgroundColor(PastelPalette.BG_CANVAS)
 
@@ -237,11 +245,14 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
     fun applySettings(newSettings: ImeSettings) {
         val dualBoxChanged = settings.handwritingDualBoxEnabled != newSettings.handwritingDualBoxEnabled
         settings = newSettings
+        setBackgroundColor(PastelPalette.BG_CANVAS)
         if (dualBoxChanged) {
             flushPendingCharacter()
             clearSession()
         }
         updateDualBoxLayout()
+        primaryCanvasView.refreshPalette()
+        secondaryCanvasView.refreshPalette()
         primaryCanvasView.applyStyle(
             strokeWidthDp = newSettings.handwritingStrokeWidthDp,
             inkColorArgb = newSettings.handwritingInkColor.argb,
@@ -252,7 +263,10 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
             inkColorArgb = newSettings.handwritingInkColor.argb,
             showGridLines = newSettings.handwritingShowGrid,
         )
+        toolbarButtons.forEach { styleToolbarButton(it) }
+        punctuationView.applyPalette()
         punctuationView.setHapticEnabled(newSettings.keyboardHapticEnabled)
+        emojiView.applyPalette()
         emojiView.setHapticEnabled(newSettings.keyboardHapticEnabled)
         emojiView.setRecentEmojis(newSettings.recentEmojiList())
         refreshCandidatesUi()
@@ -651,20 +665,11 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
         marginEndDp: Float = 6f,
         onClick: () -> Unit,
     ): TextView {
-        val normalColor = if (isModifier) PastelPalette.SURFACE_MOD_KEY else PastelPalette.SURFACE_CHAR_KEY
-        val pressedColor = if (isModifier) PastelPalette.SURFACE_PRESSED else PastelPalette.SURFACE_KEY_PRESSED
-        val textColor = when {
-            isModifier -> PastelPalette.TEXT_MOD_KEY
-            isMutedText -> PastelPalette.TEXT_MOD_KEY
-            else -> PastelPalette.TEXT_PRIMARY
-        }
         return TextView(context).apply {
             text = label
-            setTextColor(textColor)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, if (label.length > 1) 13.5f else 17f)
             typeface = Typeface.create("sans-serif-medium", if (isModifier || isMutedText) Typeface.NORMAL else Typeface.BOLD)
             gravity = Gravity.CENTER
-            background = pillStateBackground(normalColor, pressedColor)
             layoutParams = LinearLayout.LayoutParams(
                 if (weight > 0f) 0 else dp(widthDp),
                 dp(38f),
@@ -678,7 +683,30 @@ class HandwritingPanelView(context: Context) : FrameLayout(context) {
                 triggerHaptic()
                 onClick()
             }
+            val style = ToolbarButtonStyle(this, isModifier, isMutedText)
+            toolbarButtons += style
+            styleToolbarButton(style)
         }
+    }
+
+    private fun styleToolbarButton(style: ToolbarButtonStyle) {
+        val normalColor = if (style.isModifier) {
+            PastelPalette.SURFACE_MOD_KEY
+        } else {
+            PastelPalette.SURFACE_CHAR_KEY
+        }
+        val pressedColor = if (style.isModifier) {
+            PastelPalette.SURFACE_PRESSED
+        } else {
+            PastelPalette.SURFACE_KEY_PRESSED
+        }
+        val textColor = when {
+            style.isModifier -> PastelPalette.TEXT_MOD_KEY
+            style.isMutedText -> PastelPalette.TEXT_MOD_KEY
+            else -> PastelPalette.TEXT_PRIMARY
+        }
+        style.view.setTextColor(textColor)
+        style.view.background = pillStateBackground(normalColor, pressedColor)
     }
 
     private fun triggerHaptic() {

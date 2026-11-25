@@ -161,6 +161,23 @@ class EmojiPickerView(
         }
     }
 
+    /** Re-applies the resolved palette after the keyboard theme changed. */
+    fun applyPalette() {
+        setBackgroundColor(PastelPalette.BG_CANVAS)
+        backButton.setTextColor(PastelPalette.TEXT_ON_DARK_SKY)
+        backButton.background = keyStateBackground(
+            PastelPalette.SURFACE_MOD_KEY,
+            PastelPalette.SURFACE_PRESSED,
+            dpF(8.5f),
+        )
+        categoryTitleView.setTextColor(PastelPalette.TEXT_MUTED)
+        backspaceButton.setTextColor(PastelPalette.TEXT_ON_DARK_SKY)
+        backspaceButton.background = keyBackground(PastelPalette.SURFACE_MOD_KEY, dpF(8.5f))
+        buildTabs()
+        selectTab(selectedTabIndex)
+        adapter.notifyDataSetChanged()
+    }
+
     fun resetToDefaultTab() {
         val target = if (recentEmojis.isNotEmpty()) 0 else 1
         selectTab(target)
@@ -286,6 +303,7 @@ class EmojiPickerView(
 
         override fun onBindViewHolder(holder: Holder, position: Int) {
             val emoji = items[position]
+            holder.label.setTextColor(PastelPalette.TEXT_PRIMARY)
             holder.label.text = emoji
             holder.label.setOnClickListener {
                 triggerHaptic()

@@ -40,6 +40,10 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var hapticEnabled: Boolean = true
     private var backspaceHeld = false
+    private lateinit var recyclerView: RecyclerView
+    private lateinit var backBtn: TextView
+    private lateinit var titleView: TextView
+    private lateinit var backspaceBtn: TextView
     private val backspaceRepeatRunnable = object : Runnable {
         override fun run() {
             if (backspaceHeld) {
@@ -54,7 +58,7 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
         orientation = VERTICAL
         setBackgroundColor(PastelPalette.BG_CANVAS)
 
-        val recyclerView = RecyclerView(context).apply {
+        recyclerView = RecyclerView(context).apply {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f)
             layoutManager = GridLayoutManager(context, 6)
             adapter = PunctuationAdapter()
@@ -71,7 +75,7 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dp(44f))
         }
 
-        val backBtn = TextView(context).apply {
+        backBtn = TextView(context).apply {
             text = "手写"
             setTextColor(PastelPalette.TEXT_ON_DARK_SKY)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -87,7 +91,7 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
         }
         bottomBar.addView(backBtn)
 
-        val titleView = TextView(context).apply {
+        titleView = TextView(context).apply {
             text = "中文标点"
             setTextColor(PastelPalette.TEXT_MUTED)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
@@ -96,7 +100,7 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
         }
         bottomBar.addView(titleView)
 
-        val backspaceBtn = TextView(context).apply {
+        backspaceBtn = TextView(context).apply {
             text = "⌫"
             setTextColor(PastelPalette.TEXT_ON_DARK_SKY)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
@@ -111,6 +115,21 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
 
     fun setHapticEnabled(enabled: Boolean) {
         hapticEnabled = enabled
+    }
+
+    /** Re-applies the resolved palette after the keyboard theme changed. */
+    fun applyPalette() {
+        setBackgroundColor(PastelPalette.BG_CANVAS)
+        backBtn.setTextColor(PastelPalette.TEXT_ON_DARK_SKY)
+        backBtn.background = keyStateBackground(
+            PastelPalette.SURFACE_MOD_KEY,
+            PastelPalette.SURFACE_PRESSED,
+            dpF(8.5f),
+        )
+        titleView.setTextColor(PastelPalette.TEXT_MUTED)
+        backspaceBtn.setTextColor(PastelPalette.TEXT_ON_DARK_SKY)
+        backspaceBtn.background = keyBackground(PastelPalette.SURFACE_MOD_KEY, dpF(8.5f))
+        recyclerView.adapter?.notifyDataSetChanged()
     }
 
     private fun handleBackspaceTouch(v: View, ev: MotionEvent): Boolean {
@@ -175,6 +194,12 @@ class ChinesePunctuationView(context: Context) : LinearLayout(context) {
 
         override fun onBindViewHolder(holder: Holder, position: Int) {
             val item = PUNCTUATIONS[position]
+            holder.tv.setTextColor(PastelPalette.TEXT_PRIMARY)
+            holder.tv.background = keyStateBackground(
+                PastelPalette.SURFACE_CHAR_KEY,
+                PastelPalette.SURFACE_KEY_PRESSED,
+                dpF(8.5f),
+            )
             holder.tv.text = item
             holder.tv.setOnClickListener {
                 triggerHaptic()

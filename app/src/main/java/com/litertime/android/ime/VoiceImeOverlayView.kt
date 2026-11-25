@@ -315,6 +315,16 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
+    private val pinkGlyphStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.INK_ON_PINK
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val pinkGlyphFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.INK_ON_PINK
+        style = Paint.Style.FILL
+    }
     private val roseIconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = PastelPalette.INK_ON_ROSE
         style = Paint.Style.STROKE
@@ -422,6 +432,57 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     init {
         setWillNotDraw(false)
         isClickable = true
+    }
+
+    /** Re-reads the resolved palette into the cached paints after the keyboard theme changed. */
+    fun refreshPalette() {
+        barCardPaint.color = PastelPalette.BG_CANVAS
+        sideBtnPaint.color = PastelPalette.SURFACE_SIDE_BTN
+        sideBtnPressedPaint.color = PastelPalette.SURFACE_PRESSED
+        sideBtnActivePaint.color = PastelPalette.SKY_BLUE
+        sideBtnActivePressedPaint.color = PastelPalette.SKY_BLUE_PRESSED
+        micInactivePaint.color = PastelPalette.SURFACE_MIC_INACTIVE
+        micInactivePressedPaint.color = PastelPalette.SURFACE_PRESSED
+        micLoadedPaint.color = PastelPalette.SKY_BLUE
+        micLoadedPressedPaint.color = PastelPalette.SKY_BLUE_PRESSED
+        enterBtnPaint.color = PastelPalette.PINK_LIGHT
+        enterBtnPressedPaint.color = PastelPalette.PINK_PRESSED
+        backspaceBtnPressedPaint.color = PastelPalette.SURFACE_BACKSPACE_PRESSED
+        aiTextPaint.color = PastelPalette.TEXT_ON_DARK_SKY
+        leftBtnLabelPaint.color = PastelPalette.TEXT_ON_DARK_SKY
+        lightGlyphStrokePaint.color = PastelPalette.TEXT_ON_DARK_SKY
+        lightGlyphFillPaint.color = PastelPalette.TEXT_ON_DARK_SKY
+        darkGlyphStrokePaint.color = PastelPalette.INK_ON_PASTEL
+        darkGlyphFillPaint.color = PastelPalette.INK_ON_PASTEL
+        iconPaint.color = PastelPalette.TEXT_ON_DARK_SKY
+        iconFillPaint.color = PastelPalette.TEXT_ON_DARK_SKY
+        iconDarkPaint.color = PastelPalette.INK_ON_PASTEL
+        iconDarkFillPaint.color = PastelPalette.INK_ON_PASTEL
+        enterIconPaint.color = PastelPalette.INK_ON_PINK
+        pinkGlyphStrokePaint.color = PastelPalette.INK_ON_PINK
+        pinkGlyphFillPaint.color = PastelPalette.INK_ON_PINK
+        roseIconPaint.color = PastelPalette.INK_ON_ROSE
+        roseIconFillPaint.color = PastelPalette.INK_ON_ROSE
+        discBgPaint.color = PastelPalette.DISC_BG
+        sectorHighlightPaint.color = PastelPalette.SECTOR_HIGHLIGHT
+        sectorCancelPaint.color = PastelPalette.SECTOR_CANCEL
+        centerHighlightPaint.color = PastelPalette.CENTER_HIGHLIGHT
+        dividerPaint.color = PastelPalette.SECTOR_DIVIDER
+        sectorTextPaint.color = PastelPalette.TEXT_PRIMARY
+        cancelTextPaint.color = PastelPalette.INK_ON_ROSE
+        chipTextPaint.color = PastelPalette.TEXT_PRIMARY
+        knobPaint.color = PastelPalette.SKY_BLUE
+        knobCancelPaint.color = PastelPalette.ROSE_DANGER
+        knobGemmaPaint.color = PastelPalette.SKY_BLUE
+        chipBgPaint.color = PastelPalette.SURFACE_CHIP_IDLE
+        chipSelectedPaint.color = PastelPalette.SKY_BLUE
+        chipDangerPaint.color = PastelPalette.ROSE_DANGER
+        amplitudeRingPaint.color = PastelPalette.AMPLITUDE_RING
+        pillBgPaint.color = PastelPalette.PILL_BG
+        pillTextPaint.color = PastelPalette.TEXT_PRIMARY
+        memoryTextPaint.color = PastelPalette.TEXT_MUTED
+        invalidate()
+        onRadialOverlayInvalidate?.invoke()
     }
 
     fun getMaxWindowHeightPx(): Int {
@@ -1009,11 +1070,11 @@ class VoiceImeOverlayView @JvmOverloads constructor(
             cx = startX + glyphWidth / 2f,
             centerY = centerY,
             heightPx = glyphHeight,
-            strokePaint = if (isLoaded) darkGlyphStrokePaint else lightGlyphStrokePaint,
-            fillPaint = if (isLoaded) darkGlyphFillPaint else lightGlyphFillPaint,
+            strokePaint = if (isLoaded) pinkGlyphStrokePaint else lightGlyphStrokePaint,
+            fillPaint = if (isLoaded) pinkGlyphFillPaint else lightGlyphFillPaint,
         )
 
-        aiTextPaint.color = if (isLoaded) PastelPalette.INK_ON_PASTEL else PastelPalette.TEXT_ON_DARK_SKY
+        aiTextPaint.color = if (isLoaded) PastelPalette.INK_ON_PINK else PastelPalette.TEXT_ON_DARK_SKY
         aiTextPaint.textSize = aiTextSize
         val textBounds = Rect()
         aiTextPaint.getTextBounds("AI", 0, 2, textBounds)

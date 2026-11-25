@@ -3,6 +3,7 @@ package com.litertime.android.settings
 import android.content.Context
 import com.litertime.android.pipeline.VoiceMode
 import com.litertime.android.storage.DownloadMirror
+import com.litertime.android.ui.PastelPalette
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -73,8 +74,18 @@ data class ImeSettings(
     val keyboardKeyPopupEnabled: Boolean = true,
     val keyboardAutoCapsEnabled: Boolean = true,
     val keyboardDoubleSpacePeriod: Boolean = true,
+    /** Custom keyboard theme: accent 1 (selected sky-blue family). */
+    val accentColor1: Int = PastelPalette.DEFAULT_ACCENT_1,
+    /** Custom keyboard theme: accent 2 (Enter/Done & loaded-AI pink family). */
+    val accentColor2: Int = PastelPalette.DEFAULT_ACCENT_2,
+    /** Custom keyboard theme: the base canvas the subtle key surfaces are derived from. */
+    val backgroundColor: Int = PastelPalette.DEFAULT_BG_CANVAS,
     val recentEmojis: String = "",
 ) {
+    val hasCustomKeyboardColors: Boolean
+        get() = accentColor1 != PastelPalette.DEFAULT_ACCENT_1 ||
+            accentColor2 != PastelPalette.DEFAULT_ACCENT_2 ||
+            backgroundColor != PastelPalette.DEFAULT_BG_CANVAS
     fun recentEmojiList(): List<String> =
         recentEmojis.split(RECENT_EMOJI_SEPARATOR).filter { it.isNotEmpty() }
 
@@ -188,6 +199,9 @@ class ImeSettingsStore(private val appFilesDir: File) {
             keyboardKeyPopupEnabled = props.getProperty("keyboardKeyPopupEnabled", "true").toBoolean(),
             keyboardAutoCapsEnabled = props.getProperty("keyboardAutoCapsEnabled", "true").toBoolean(),
             keyboardDoubleSpacePeriod = props.getProperty("keyboardDoubleSpacePeriod", "true").toBoolean(),
+            accentColor1 = parseColor(props.getProperty("accentColor1"), PastelPalette.DEFAULT_ACCENT_1),
+            accentColor2 = parseColor(props.getProperty("accentColor2"), PastelPalette.DEFAULT_ACCENT_2),
+            backgroundColor = parseColor(props.getProperty("backgroundColor"), PastelPalette.DEFAULT_BG_CANVAS),
             recentEmojis = props.getProperty("recentEmojis", ""),
         )
         cachedMtime = mtime
@@ -256,6 +270,9 @@ class ImeSettingsStore(private val appFilesDir: File) {
             setProperty("keyboardKeyPopupEnabled", settings.keyboardKeyPopupEnabled.toString())
             setProperty("keyboardAutoCapsEnabled", settings.keyboardAutoCapsEnabled.toString())
             setProperty("keyboardDoubleSpacePeriod", settings.keyboardDoubleSpacePeriod.toString())
+            setProperty("accentColor1", formatColor(settings.accentColor1))
+            setProperty("accentColor2", formatColor(settings.accentColor2))
+            setProperty("backgroundColor", formatColor(settings.backgroundColor))
             setProperty("recentEmojis", settings.recentEmojis)
         }
         val tmp = File(appFilesDir, "ime-settings.properties.tmp")
@@ -268,3 +285,9 @@ class ImeSettingsStore(private val appFilesDir: File) {
         cachedSettings = settings
     }
 }
+
+/** Persist an ARGB color as an unsigned 8-digit hex string (e.g. `FFADDDEF`). */
+private fun formatColor(argb: Int): String = "%08X".format(argb)
+
+private fun parseColor(raw: String?, fallback: Int): Int =
+    raw?.trim()?.takeIf { it.isNotEmpty() }?.toLongOrNull(16)?.toInt() ?: fallback

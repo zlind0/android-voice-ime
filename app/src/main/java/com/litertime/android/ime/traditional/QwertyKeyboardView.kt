@@ -98,7 +98,11 @@ class QwertyKeyboardView(context: Context) : View(context) {
         style = Paint.Style.FILL
     }
     private val shiftActivePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = PastelPalette.SURFACE_SHIFT_ACTIVE
+        color = PastelPalette.SKY_BLUE
+        style = Paint.Style.FILL
+    }
+    private val shiftActivePressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = PastelPalette.SKY_BLUE_PRESSED
         style = Paint.Style.FILL
     }
     private val capsLockBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -141,7 +145,7 @@ class QwertyKeyboardView(context: Context) : View(context) {
         strokeJoin = Paint.Join.ROUND
     }
     private val shiftActiveIconFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = PastelPalette.TEXT_PRIMARY
+        color = PastelPalette.INK_ON_PASTEL
         style = Paint.Style.FILL
     }
     private val capsLockIconFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -172,10 +176,36 @@ class QwertyKeyboardView(context: Context) : View(context) {
     fun applySettings(newSettings: ImeSettings) {
         val rebuildNeeded = settings.keyboardShowNumberRow != newSettings.keyboardShowNumberRow
         settings = newSettings
+        refreshPalette()
         if (rebuildNeeded) {
             rebuildLayout()
-            invalidate()
         }
+        invalidate()
+    }
+
+    /** Re-reads the resolved palette into the cached paints (called after a theme change). */
+    fun refreshPalette() {
+        bgPaint.color = PastelPalette.BG_CANVAS
+        charKeyPaint.color = PastelPalette.SURFACE_CHAR_KEY
+        modKeyPaint.color = PastelPalette.SURFACE_MOD_KEY
+        enterKeyPaint.color = PastelPalette.PINK_LIGHT
+        enterKeyPressedPaint.color = PastelPalette.PINK_PRESSED
+        pressedKeyPaint.color = PastelPalette.SURFACE_KEY_PRESSED
+        backspacePressedPaint.color = PastelPalette.SURFACE_BACKSPACE_PRESSED
+        shiftActivePaint.color = PastelPalette.SKY_BLUE
+        shiftActivePressedPaint.color = PastelPalette.SKY_BLUE_PRESSED
+        capsLockBgPaint.color = PastelPalette.SKY_BLUE
+        capsLockPressedPaint.color = PastelPalette.SKY_BLUE_PRESSED
+        charTextPaint.color = PastelPalette.TEXT_PRIMARY
+        modTextPaint.color = PastelPalette.TEXT_MOD_KEY
+        enterTextPaint.color = PastelPalette.INK_ON_PINK
+        spaceTextPaint.color = PastelPalette.TEXT_MUTED
+        iconStrokePaint.color = PastelPalette.TEXT_ON_DARK_SKY
+        shiftActiveIconFillPaint.color = PastelPalette.INK_ON_PASTEL
+        capsLockIconFillPaint.color = PastelPalette.INK_ON_PASTEL
+        enterIconPaint.color = PastelPalette.INK_ON_PINK
+        popupBgPaint.color = PastelPalette.SURFACE_POPUP
+        popupTextPaint.color = PastelPalette.TEXT_PRIMARY
     }
 
     fun configureForInput(editorInfo: EditorInfo?, autoCapitalize: Boolean) {
@@ -289,9 +319,10 @@ class QwertyKeyboardView(context: Context) : View(context) {
                 kr.spec.kind == EnglishKeyboardLayout.KeyKind.SHIFT &&
                     shiftState == EnglishKeyboardLayout.ShiftState.CAPS_LOCK ->
                     if (isPressed) capsLockPressedPaint else capsLockBgPaint
-                isPressed -> pressedKeyPaint
                 kr.spec.kind == EnglishKeyboardLayout.KeyKind.SHIFT &&
-                    shiftState == EnglishKeyboardLayout.ShiftState.SHIFTED -> shiftActivePaint
+                    shiftState == EnglishKeyboardLayout.ShiftState.SHIFTED ->
+                    if (isPressed) shiftActivePressedPaint else shiftActivePaint
+                isPressed -> pressedKeyPaint
                 kr.spec.kind == EnglishKeyboardLayout.KeyKind.CHARACTER ||
                     kr.spec.kind == EnglishKeyboardLayout.KeyKind.SPACE -> charKeyPaint
                 else -> modKeyPaint

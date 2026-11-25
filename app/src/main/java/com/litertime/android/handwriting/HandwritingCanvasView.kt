@@ -85,6 +85,13 @@ class HandwritingCanvasView @JvmOverloads constructor(
         invalidate()
     }
 
+    /** Re-applies the resolved palette after the keyboard theme changed. */
+    fun refreshPalette() {
+        bgPaint.color = PastelPalette.SURFACE_PAD
+        gridPaint.color = PastelPalette.GRID_LINE
+        invalidate()
+    }
+
     fun hasStrokes(): Boolean = strokes.isNotEmpty()
 
     fun clearImmediate() {

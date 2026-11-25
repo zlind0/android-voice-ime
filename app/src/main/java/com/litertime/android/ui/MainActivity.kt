@@ -51,6 +51,7 @@ import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Screenshot
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Warning
@@ -72,6 +73,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -84,6 +86,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -95,6 +98,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -165,25 +169,30 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.dark(PastelPalette.BG_CANVAS),
-            navigationBarStyle = SystemBarStyle.dark(PastelPalette.BG_CANVAS),
-        )
         val app = application as LiteRtImeApp
+        val initialSettings = app.settingsStore.getSettings()
+        // Resolve the saved keyboard theme before the first frame so there is no default flash.
+        PastelPalette.applyTheme(
+            accent1 = initialSettings.accentColor1,
+            accent2 = initialSettings.accentColor2,
+            background = initialSettings.backgroundColor,
+        )
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(initialSettings.backgroundColor),
+            navigationBarStyle = SystemBarStyle.dark(initialSettings.backgroundColor),
+        )
         inferenceClient = InferenceClient(this)
         inferenceClient.addListener(playgroundListener)
         inferenceClient.bind()
         modelDownloader = ModelDownloader(app.modelStorage)
 
         setContent {
-            LiteRtPastelTheme {
-                LiteRtImeSettingsScreen(
-                    app = app,
-                    inferenceClient = inferenceClient,
-                    downloader = modelDownloader,
-                    playgroundRunState = playgroundRunState,
-                )
-            }
+            LiteRtImeSettingsScreen(
+                app = app,
+                inferenceClient = inferenceClient,
+                downloader = modelDownloader,
+                playgroundRunState = playgroundRunState,
+            )
         }
     }
 
@@ -272,6 +281,7 @@ private enum class SettingsPage(val title: String) {
     MODELS("模型下载与选择"),
     INPUT("输入设置"),
     TRADITIONAL_INPUT("手写与键盘设置"),
+    COLORS("色彩自定义"),
     ONLINE("在线大模型接口"),
     PROMPTS("提示词编辑"),
     DEBUG("AI 请求调试与回放"),
@@ -302,6 +312,22 @@ private fun LiteRtImeSettingsScreen(
     var settings by remember(refreshTick) { mutableStateOf(settingsStore.getSettings()) }
     var storageConfig by remember(refreshTick) { mutableStateOf(storage.getConfig()) }
     var storageError by remember { mutableStateOf<String?>(null) }
+
+    // Resolve the palette synchronously so every direct PastelPalette read below (chips, switches,
+    // swatches) already sees the new colors in this composition pass.
+    PastelPalette.applyTheme(
+        accent1 = settings.accentColor1,
+        accent2 = settings.accentColor2,
+        background = settings.backgroundColor,
+    )
+
+    // Keep the system bars in sync with the background color.
+    LaunchedEffect(settings.backgroundColor) {
+        (context as? ComponentActivity)?.enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(settings.backgroundColor),
+            navigationBarStyle = SystemBarStyle.dark(settings.backgroundColor),
+        )
+    }
 
     var logEntries by remember { mutableStateOf<List<AiRequestLogEntry>>(emptyList()) }
     var selectedLogId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -515,6 +541,18 @@ private fun LiteRtImeSettingsScreen(
         append(if (settings.keyboardShowNumberRow) "含数字行" else "标准 QWERTY")
     }
 
+    val colorsPreview = if (settings.hasCustomKeyboardColors) {
+        String.format(
+            Locale.US,
+            "强调一 #%06X · 强调二 #%06X · 背景 #%06X",
+            settings.accentColor1 and 0xFFFFFF,
+            settings.accentColor2 and 0xFFFFFF,
+            settings.backgroundColor and 0xFFFFFF,
+        )
+    } else {
+        "默认深色马卡龙配色"
+    }
+
     val onlinePreview = buildString {
         append(settings.llmProvider.displayName)
         if (settings.llmProvider != LlmProviderType.LOCAL_LITERT) {
@@ -543,6 +581,11 @@ private fun LiteRtImeSettingsScreen(
         )
     }
 
+    LiteRtPastelTheme(
+        accentColor1 = settings.accentColor1,
+        accentColor2 = settings.accentColor2,
+        backgroundColor = settings.backgroundColor,
+    ) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -551,7 +594,7 @@ private fun LiteRtImeSettingsScreen(
                     containerColor = MaterialTheme.colorScheme.background,
                     scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                     titleContentColor = MaterialTheme.colorScheme.onBackground,
-                    navigationIconContentColor = Color.White,
+                    navigationIconContentColor = Color(PastelPalette.TEXT_PRIMARY),
                 ),
                 navigationIcon = {
                     if (currentPage != SettingsPage.HOME) {
@@ -610,6 +653,12 @@ private fun LiteRtImeSettingsScreen(
                     title = "手写与键盘设置",
                     preview = traditionalInputPreview,
                     onClick = { currentPage = SettingsPage.TRADITIONAL_INPUT },
+                )
+                SettingsHomeItem(
+                    icon = { Icon(Icons.Rounded.Palette, contentDescription = null) },
+                    title = "色彩自定义",
+                    preview = colorsPreview,
+                    onClick = { currentPage = SettingsPage.COLORS },
                 )
                 SettingsHomeItem(
                     icon = { Icon(Icons.Rounded.Cloud, contentDescription = null) },
@@ -963,6 +1012,7 @@ private fun LiteRtImeSettingsScreen(
                         installed = installed,
                         loaded = inferenceState.llmLoaded && inferenceState.llmModelId == spec.id,
                         loadedBadgeColor = Color(PastelPalette.PINK_LIGHT),
+                        loadedBadgeInk = Color(PastelPalette.INK_ON_PINK),
                         downloadState = dlState,
                         onSelect = {
                             settings = settingsStore.update { it.copy(activeLlmModelId = spec.id) }
@@ -1341,6 +1391,74 @@ private fun LiteRtImeSettingsScreen(
                                 settings = settingsStore.update { it.copy(keyboardDoubleSpacePeriod = checked) }
                             },
                         )
+                    }
+                }
+            }
+
+            // Keyboard color customization: three base colors, everything else derived.
+            if (currentPage == SettingsPage.COLORS) {
+                SectionCard(title = "色彩自定义") {
+                    Text(
+                        text = "键盘只有三种基础颜色：强调色一（选中态天蓝）、强调色二（回车/已加载 AI 粉）、背景色。" +
+                            "其他较浅的按键都由背景色叠加固定透明度的白色遮罩自动生成；全部使用默认值时不改变现有外观。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    KeyboardColorPreview(
+                        accent1 = settings.accentColor1,
+                        accent2 = settings.accentColor2,
+                        background = settings.backgroundColor,
+                    )
+
+                    PastelDivider()
+                    ColorSettingItem(
+                        title = "强调色一",
+                        description = "选中的「En / 中」模式、已加载 Whisper 麦克风、Caps Lock 与高亮候选字",
+                        colorArgb = settings.accentColor1,
+                        defaultArgb = PastelPalette.DEFAULT_ACCENT_1,
+                        onColorChange = { color ->
+                            settings = settingsStore.update { it.copy(accentColor1 = color) }
+                        },
+                    )
+
+                    PastelDivider()
+                    ColorSettingItem(
+                        title = "强调色二",
+                        description = "回车 / Done 键、已加载的 AI 麦克风、加载状态徽标",
+                        colorArgb = settings.accentColor2,
+                        defaultArgb = PastelPalette.DEFAULT_ACCENT_2,
+                        onColorChange = { color ->
+                            settings = settingsStore.update { it.copy(accentColor2 = color) }
+                        },
+                    )
+
+                    PastelDivider()
+                    ColorSettingItem(
+                        title = "背景色",
+                        description = "整个键盘的底色；所有按键表面、手写板与弹出气泡都由它派生",
+                        colorArgb = settings.backgroundColor,
+                        defaultArgb = PastelPalette.DEFAULT_BG_CANVAS,
+                        onColorChange = { color ->
+                            settings = settingsStore.update { it.copy(backgroundColor = color) }
+                        },
+                    )
+
+                    PastelDivider()
+                    PastelTonalButton(
+                        onClick = {
+                            settings = settingsStore.update {
+                                it.copy(
+                                    accentColor1 = PastelPalette.DEFAULT_ACCENT_1,
+                                    accentColor2 = PastelPalette.DEFAULT_ACCENT_2,
+                                    backgroundColor = PastelPalette.DEFAULT_BG_CANVAS,
+                                )
+                            }
+                        },
+                        enabled = settings.hasCustomKeyboardColors,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("全部恢复默认配色")
                     }
                 }
             }
@@ -1831,6 +1949,234 @@ private fun LiteRtImeSettingsScreen(
             Spacer(Modifier.height(24.dp))
         }
     }
+    }
+}
+
+@Composable
+private fun KeyboardColorPreview(
+    accent1: Int,
+    accent2: Int,
+    background: Int,
+) {
+    val colors = remember(accent1, accent2, background) {
+        PastelPalette.colorsFor(accent1, accent2, background)
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("实时预览", style = MaterialTheme.typography.labelLarge)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            ColorSwatch("背景", colors.bgCanvas, Modifier.weight(1f))
+            ColorSwatch("按键", colors.surfaceCharKey, Modifier.weight(1f))
+            ColorSwatch("强调一", colors.skyBlue, Modifier.weight(1f))
+            ColorSwatch("强调二", colors.pinkLight, Modifier.weight(1f))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            ColorSwatch("修饰键", colors.surfaceModKey, Modifier.weight(1f))
+            ColorSwatch("按下", colors.surfaceKeyPressed, Modifier.weight(1f))
+            ColorSwatch("手写板", colors.surfacePad, Modifier.weight(1f))
+            ColorSwatch("危险", colors.roseDanger, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun ColorSwatch(label: String, color: Int, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(30.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(color)),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun ColorSettingItem(
+    title: String,
+    description: String,
+    colorArgb: Int,
+    defaultArgb: Int,
+    onColorChange: (Int) -> Unit,
+) {
+    var expanded by rememberSaveable(title) { mutableStateOf(false) }
+    val initialHsv = remember(title) {
+        FloatArray(3).also { android.graphics.Color.colorToHSV(colorArgb, it) }
+    }
+    var hue by rememberSaveable(title + "#hue") { mutableFloatStateOf(initialHsv[0]) }
+    var saturation by rememberSaveable(title + "#sat") { mutableFloatStateOf(initialHsv[1]) }
+    var valueBrightness by rememberSaveable(title + "#val") { mutableFloatStateOf(initialHsv[2]) }
+
+    // Sync local HSV state when the color is changed externally (e.g. "全部恢复默认").
+    LaunchedEffect(colorArgb) {
+        val expected = android.graphics.Color.HSVToColor(
+            floatArrayOf(hue, saturation, valueBrightness),
+        )
+        val rDiff = kotlin.math.abs(((expected shr 16) and 0xFF) - ((colorArgb shr 16) and 0xFF))
+        val gDiff = kotlin.math.abs(((expected shr 8) and 0xFF) - ((colorArgb shr 8) and 0xFF))
+        val bDiff = kotlin.math.abs((expected and 0xFF) - (colorArgb and 0xFF))
+        if (rDiff > 2 || gDiff > 2 || bDiff > 2) {
+            val hsv = FloatArray(3).also { android.graphics.Color.colorToHSV(colorArgb, it) }
+            hue = hsv[0]
+            saturation = hsv[1]
+            valueBrightness = hsv[2]
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(colorArgb)),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    text = String.format(Locale.US, "#%06X", colorArgb and 0xFFFFFF),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "收起" else "调整")
+            }
+        }
+        Text(
+            text = description,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        if (expanded) {
+            val hsvColor = Color(colorArgb)
+            Text("色相 ${hue.toInt()}°", style = MaterialTheme.typography.bodySmall)
+            GradientStrip(
+                listOf(
+                    Color(0xFFFF0000), Color(0xFFFFFF00), Color(0xFF00FF00),
+                    Color(0xFF00FFFF), Color(0xFF0000FF), Color(0xFFFF00FF),
+                    Color(0xFFFF0000),
+                ),
+            )
+            Slider(
+                value = hue,
+                onValueChange = { next ->
+                    hue = next
+                    onColorChange(
+                        android.graphics.Color.HSVToColor(
+                            floatArrayOf(next, saturation, valueBrightness),
+                        ),
+                    )
+                },
+                valueRange = 0f..360f,
+                colors = SliderDefaults.colors(
+                    thumbColor = hsvColor,
+                    activeTrackColor = hsvColor,
+                    inactiveTrackColor = Color(PastelPalette.SURFACE_CHIP_IDLE),
+                ),
+            )
+
+            Text("饱和度 ${(saturation * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+            GradientStrip(
+                listOf(
+                    Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, 0f, valueBrightness))),
+                    Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, 1f, valueBrightness))),
+                ),
+            )
+            Slider(
+                value = saturation,
+                onValueChange = { next ->
+                    saturation = next
+                    onColorChange(
+                        android.graphics.Color.HSVToColor(
+                            floatArrayOf(hue, next, valueBrightness),
+                        ),
+                    )
+                },
+                valueRange = 0f..1f,
+                colors = SliderDefaults.colors(
+                    thumbColor = hsvColor,
+                    activeTrackColor = hsvColor,
+                    inactiveTrackColor = Color(PastelPalette.SURFACE_CHIP_IDLE),
+                ),
+            )
+
+            Text("明度 ${(valueBrightness * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+            GradientStrip(
+                listOf(
+                    Color.Black,
+                    Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, 1f))),
+                ),
+            )
+            Slider(
+                value = valueBrightness,
+                onValueChange = { next ->
+                    valueBrightness = next
+                    onColorChange(
+                        android.graphics.Color.HSVToColor(
+                            floatArrayOf(hue, saturation, next),
+                        ),
+                    )
+                },
+                valueRange = 0f..1f,
+                colors = SliderDefaults.colors(
+                    thumbColor = hsvColor,
+                    activeTrackColor = hsvColor,
+                    inactiveTrackColor = Color(PastelPalette.SURFACE_CHIP_IDLE),
+                ),
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(
+                    onClick = {
+                        val hsv = FloatArray(3).also {
+                            android.graphics.Color.colorToHSV(defaultArgb, it)
+                        }
+                        hue = hsv[0]
+                        saturation = hsv[1]
+                        valueBrightness = hsv[2]
+                        onColorChange(defaultArgb)
+                    },
+                ) {
+                    Text("恢复默认值")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GradientStrip(colors: List<Color>) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(8.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(Brush.horizontalGradient(colors)),
+    )
 }
 
 @Composable
@@ -1931,7 +2277,7 @@ private fun SettingsHomeItem(
                     .background(Color(PastelPalette.SURFACE_ICON_BADGE)),
                 contentAlignment = Alignment.Center,
             ) {
-                CompositionLocalProvider(LocalContentColor provides Color.White) {
+                CompositionLocalProvider(LocalContentColor provides Color(PastelPalette.TEXT_PRIMARY)) {
                     icon()
                 }
             }
@@ -2102,6 +2448,7 @@ private fun ModelItemRow(
     installed: Boolean,
     loaded: Boolean = false,
     loadedBadgeColor: Color = Color(PastelPalette.SKY_BLUE),
+    loadedBadgeInk: Color = Color(PastelPalette.INK_ON_PASTEL),
     downloadState: DownloadState,
     onSelect: () -> Unit,
     onDownload: () -> Unit,
@@ -2130,7 +2477,7 @@ private fun ModelItemRow(
                             text = "已加载",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color(PastelPalette.INK_ON_PASTEL),
+                            color = loadedBadgeInk,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(loadedBadgeColor)

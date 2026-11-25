@@ -9,6 +9,7 @@ import android.widget.FrameLayout
 import com.litertime.android.handwriting.HandwritingPanelView
 import com.litertime.android.ime.traditional.EnglishKeyboardPanelView
 import com.litertime.android.settings.ImeSettings
+import com.litertime.android.ui.PastelPalette
 
 /**
  * Root IME view hosting three layers:
@@ -86,8 +87,15 @@ class ImeRootContainerView(context: Context) : FrameLayout(context) {
 
     fun applySettings(settings: ImeSettings) {
         currentSettings = settings
+        // Resolve the three user-customizable base colors before any child reads the palette.
+        PastelPalette.applyTheme(
+            accent1 = settings.accentColor1,
+            accent2 = settings.accentColor2,
+            background = settings.backgroundColor,
+        )
         val maxDp = maxOf(settings.handwritingPanelHeightDp, settings.keyboardHeightDp)
         voiceOverlayView.updateMaxSupportedPanelHeightDp(maxDp)
+        voiceOverlayView.refreshPalette()
         englishKeyboardPanel.applySettings(settings)
         handwritingPanel.applySettings(settings)
 
