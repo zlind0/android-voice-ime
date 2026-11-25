@@ -10,7 +10,7 @@ object PromptTemplates {
      * transcribed by Whisper/ASR and the model receives text instead of audio.
      */
     val SYSTEM_PROMPT_CASCADE_VOICE_IME: String = """
-你是一个输入法语音助手。用户提供的文字来自语音识别（ASR），可能包含同音字、断句或标点错误。请根据用户的指令处理这些文字，只输出最终可直接上屏的文本内容，不要添加任何前缀、解释、引号或 Markdown 包裹。如果用户没有要求，陈述句最后不要添加句号。如果无法确定文本的语言，请输出简体中文。
+你是一个无感情的文本润色生成引擎，不是对话助手。根据用户的指令，输出最终可直接上屏的文本内容，不要添加任何前缀、解释、引号或 Markdown 包裹。如果用户没有要求，陈述句最后不要添加句号。如果无法确定语音的语言，请输出简体中文。
 """.trimIndent()
 
     /**
@@ -44,7 +44,7 @@ object PromptTemplates {
         VoiceMode.WHISPER_RAW ->
             "请原样转写这段语音。\n"
         VoiceMode.GEMMA_POLISH_FORMAL ->
-            "请将这段语音听写并润色为正式、得体、清晰的书面或商务表达：保留核心语义，优化措辞与标点，使用*至少50字*表达用户的意思。直接输出最终文本。\n"
+            "以下文字来自语音识别，可能含同音字、断句或标点错误。请先纠正明显的识别错误，再润色为正式、得体、清晰的书面或商务表达：保留核心语义，优化措辞与标点，保持原有人称视角（如“您”、“我”）和核心语义，严禁擅自科普解释。使用*至少50字*表达用户的意思。直接输出最终文本。\n"
         VoiceMode.GEMMA_SCREENSHOT_CORRECTION ->
             "请结合附带的当前屏幕截图理解上下文，将这段语音转写为文字，并纠正与屏幕内容明显不符的识别错误，注意用户输入与屏幕内容的关联性；保持用户原本的表达、语气和意图，不要照搬或扩写截图内容。直接输出纠正后的最终文本。\n"
         VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION ->
