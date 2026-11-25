@@ -19,6 +19,18 @@ enum class LlmProviderType(val displayName: String) {
     }
 }
 
+enum class HandwritingInkColor(val displayName: String, val argb: Int) {
+    WHITE("纯白", 0xFFFFFFFF.toInt()),
+    SKY_BLUE("天蓝", 0xFF60A5FA.toInt()),
+    EMERALD("翠绿", 0xFF34D399.toInt()),
+    AMBER("琥珀", 0xFFFBBF24.toInt());
+
+    companion object {
+        fun fromId(value: String?): HandwritingInkColor =
+            entries.firstOrNull { it.name == value } ?: WHITE
+    }
+}
+
 data class ImeSettings(
     val activeAsrModelId: String = "whisper-small",
     val activeLlmModelId: String = "gemma4-e2b",
@@ -45,7 +57,51 @@ data class ImeSettings(
     val userPromptPolishFormal: String = "",
     val userPromptScreenshotCorrection: String = "",
     val userPromptScreenshotInstruction: String = "",
+    /** Chinese handwriting delay (ms) after last stroke before auto-commit + fade-out. */
+    val handwritingFadeDelayMs: Int = DEFAULT_HANDWRITING_FADE_DELAY_MS,
+    val handwritingAutoCommitFirst: Boolean = true,
+    val handwritingStrokeWidthDp: Float = DEFAULT_HANDWRITING_STROKE_WIDTH_DP,
+    val handwritingInkColor: HandwritingInkColor = HandwritingInkColor.WHITE,
+    val handwritingShowGrid: Boolean = true,
+    val handwritingPanelHeightDp: Int = DEFAULT_HANDWRITING_PANEL_HEIGHT_DP,
+    /** English QWERTY keyboard settings. */
+    val keyboardHeightDp: Int = DEFAULT_KEYBOARD_HEIGHT_DP,
+    val keyboardShowNumberRow: Boolean = false,
+    val keyboardHapticEnabled: Boolean = true,
+    val keyboardKeyPopupEnabled: Boolean = true,
+    val keyboardAutoCapsEnabled: Boolean = true,
+    val keyboardDoubleSpacePeriod: Boolean = true,
+    val recentEmojis: String = "",
 ) {
+    fun recentEmojiList(): List<String> =
+        recentEmojis.split(RECENT_EMOJI_SEPARATOR).filter { it.isNotEmpty() }
+
+    fun withAddedRecentEmoji(emoji: String): ImeSettings {
+        if (emoji.isBlank()) return this
+        val updated = (listOf(emoji) + recentEmojiList().filter { it != emoji }).take(MAX_RECENT_EMOJIS)
+        return copy(recentEmojis = updated.joinToString(RECENT_EMOJI_SEPARATOR))
+    }
+
+    companion object {
+        const val MIN_HANDWRITING_FADE_DELAY_MS = 400
+        const val MAX_HANDWRITING_FADE_DELAY_MS = 2500
+        const val DEFAULT_HANDWRITING_FADE_DELAY_MS = 1000
+
+        const val MIN_HANDWRITING_STROKE_WIDTH_DP = 2.5f
+        const val MAX_HANDWRITING_STROKE_WIDTH_DP = 10.0f
+        const val DEFAULT_HANDWRITING_STROKE_WIDTH_DP = 5.0f
+
+        const val MIN_HANDWRITING_PANEL_HEIGHT_DP = 220
+        const val MAX_HANDWRITING_PANEL_HEIGHT_DP = 340
+        const val DEFAULT_HANDWRITING_PANEL_HEIGHT_DP = 270
+
+        const val MIN_KEYBOARD_HEIGHT_DP = 200
+        const val MAX_KEYBOARD_HEIGHT_DP = 320
+        const val DEFAULT_KEYBOARD_HEIGHT_DP = 240
+
+        const val MAX_RECENT_EMOJIS = 32
+        private const val RECENT_EMOJI_SEPARATOR = "\u001F"
+    }
     fun userPromptOverride(mode: VoiceMode): String = when (mode) {
         VoiceMode.WHISPER_RAW -> userPromptWhisperRaw
         VoiceMode.GEMMA_POLISH_FORMAL -> userPromptPolishFormal
@@ -109,6 +165,27 @@ class ImeSettingsStore(private val appFilesDir: File) {
             userPromptPolishFormal = props.getProperty("promptUserPolishFormal", ""),
             userPromptScreenshotCorrection = props.getProperty("promptUserScreenshotCorrection", ""),
             userPromptScreenshotInstruction = props.getProperty("promptUserScreenshotInstruction", ""),
+            handwritingFadeDelayMs = (props.getProperty("handwritingFadeDelayMs")?.toIntOrNull()
+                ?: ImeSettings.DEFAULT_HANDWRITING_FADE_DELAY_MS)
+                .coerceIn(ImeSettings.MIN_HANDWRITING_FADE_DELAY_MS, ImeSettings.MAX_HANDWRITING_FADE_DELAY_MS),
+            handwritingAutoCommitFirst = props.getProperty("handwritingAutoCommitFirst", "true").toBoolean(),
+            handwritingStrokeWidthDp = (props.getProperty("handwritingStrokeWidthDp")?.toFloatOrNull()
+                ?: ImeSettings.DEFAULT_HANDWRITING_STROKE_WIDTH_DP)
+                .coerceIn(ImeSettings.MIN_HANDWRITING_STROKE_WIDTH_DP, ImeSettings.MAX_HANDWRITING_STROKE_WIDTH_DP),
+            handwritingInkColor = HandwritingInkColor.fromId(props.getProperty("handwritingInkColor")),
+            handwritingShowGrid = props.getProperty("handwritingShowGrid", "true").toBoolean(),
+            handwritingPanelHeightDp = (props.getProperty("handwritingPanelHeightDp")?.toIntOrNull()
+                ?: ImeSettings.DEFAULT_HANDWRITING_PANEL_HEIGHT_DP)
+                .coerceIn(ImeSettings.MIN_HANDWRITING_PANEL_HEIGHT_DP, ImeSettings.MAX_HANDWRITING_PANEL_HEIGHT_DP),
+            keyboardHeightDp = (props.getProperty("keyboardHeightDp")?.toIntOrNull()
+                ?: ImeSettings.DEFAULT_KEYBOARD_HEIGHT_DP)
+                .coerceIn(ImeSettings.MIN_KEYBOARD_HEIGHT_DP, ImeSettings.MAX_KEYBOARD_HEIGHT_DP),
+            keyboardShowNumberRow = props.getProperty("keyboardShowNumberRow", "false").toBoolean(),
+            keyboardHapticEnabled = props.getProperty("keyboardHapticEnabled", "true").toBoolean(),
+            keyboardKeyPopupEnabled = props.getProperty("keyboardKeyPopupEnabled", "true").toBoolean(),
+            keyboardAutoCapsEnabled = props.getProperty("keyboardAutoCapsEnabled", "true").toBoolean(),
+            keyboardDoubleSpacePeriod = props.getProperty("keyboardDoubleSpacePeriod", "true").toBoolean(),
+            recentEmojis = props.getProperty("recentEmojis", ""),
         )
         cachedMtime = mtime
         cachedSettings = loaded
@@ -143,6 +220,39 @@ class ImeSettingsStore(private val appFilesDir: File) {
             setProperty("promptUserPolishFormal", settings.userPromptPolishFormal)
             setProperty("promptUserScreenshotCorrection", settings.userPromptScreenshotCorrection)
             setProperty("promptUserScreenshotInstruction", settings.userPromptScreenshotInstruction)
+            setProperty(
+                "handwritingFadeDelayMs",
+                settings.handwritingFadeDelayMs
+                    .coerceIn(ImeSettings.MIN_HANDWRITING_FADE_DELAY_MS, ImeSettings.MAX_HANDWRITING_FADE_DELAY_MS)
+                    .toString(),
+            )
+            setProperty("handwritingAutoCommitFirst", settings.handwritingAutoCommitFirst.toString())
+            setProperty(
+                "handwritingStrokeWidthDp",
+                settings.handwritingStrokeWidthDp
+                    .coerceIn(ImeSettings.MIN_HANDWRITING_STROKE_WIDTH_DP, ImeSettings.MAX_HANDWRITING_STROKE_WIDTH_DP)
+                    .toString(),
+            )
+            setProperty("handwritingInkColor", settings.handwritingInkColor.name)
+            setProperty("handwritingShowGrid", settings.handwritingShowGrid.toString())
+            setProperty(
+                "handwritingPanelHeightDp",
+                settings.handwritingPanelHeightDp
+                    .coerceIn(ImeSettings.MIN_HANDWRITING_PANEL_HEIGHT_DP, ImeSettings.MAX_HANDWRITING_PANEL_HEIGHT_DP)
+                    .toString(),
+            )
+            setProperty(
+                "keyboardHeightDp",
+                settings.keyboardHeightDp
+                    .coerceIn(ImeSettings.MIN_KEYBOARD_HEIGHT_DP, ImeSettings.MAX_KEYBOARD_HEIGHT_DP)
+                    .toString(),
+            )
+            setProperty("keyboardShowNumberRow", settings.keyboardShowNumberRow.toString())
+            setProperty("keyboardHapticEnabled", settings.keyboardHapticEnabled.toString())
+            setProperty("keyboardKeyPopupEnabled", settings.keyboardKeyPopupEnabled.toString())
+            setProperty("keyboardAutoCapsEnabled", settings.keyboardAutoCapsEnabled.toString())
+            setProperty("keyboardDoubleSpacePeriod", settings.keyboardDoubleSpacePeriod.toString())
+            setProperty("recentEmojis", settings.recentEmojis)
         }
         val tmp = File(appFilesDir, "ime-settings.properties.tmp")
         FileOutputStream(tmp).use { props.store(it, "LiteRT IME settings") }

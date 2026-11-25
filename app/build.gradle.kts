@@ -108,9 +108,67 @@ ensurePrebuiltAar(
     expectedSha256 = sherpaOnnxSha256,
 )
 
+// Ensure handwriting NCNN assets (Ismantic/Handwritten, Apache-2.0) exist if building from a fresh clone.
+fun ensureAssetFile(target: File, urls: List<String>) {
+    if (target.isFile && target.length() > 0L) return
+    target.parentFile.mkdirs()
+    val client = HttpClient.newBuilder()
+        .followRedirects(HttpClient.Redirect.NORMAL)
+        .connectTimeout(Duration.ofSeconds(30))
+        .build()
+    var lastError: Exception? = null
+    for (url in urls) {
+        try {
+            val partial = File(target.parentFile, target.name + ".part")
+            val request = HttpRequest.newBuilder(URI.create(url))
+                .timeout(Duration.ofMinutes(5))
+                .GET()
+                .build()
+            val response = client.send(
+                request,
+                HttpResponse.BodyHandlers.ofFile(
+                    partial.toPath(),
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE,
+                    StandardOpenOption.TRUNCATE_EXISTING,
+                ),
+            )
+            if (response.statusCode() in 200..299 && partial.length() > 0L) {
+                Files.move(partial.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                return
+            }
+            partial.delete()
+        } catch (e: Exception) {
+            lastError = e
+        }
+    }
+    throw GradleException(
+        "Failed to download asset ${target.name} from $urls. Last error: ${lastError?.message}",
+        lastError,
+    )
+}
+
+val handwritingAssetsDir = layout.projectDirectory.dir("src/main/assets/handwriting").asFile
+listOf("model.ncnn.param", "model.ncnn.bin", "charset.json").forEach { name ->
+    ensureAssetFile(
+        target = File(handwritingAssetsDir, name),
+        urls = listOf(
+            "https://huggingface.co/Ismantic/Handwritten/resolve/main/ncnn/$name",
+            "https://hf-mirror.com/Ismantic/Handwritten/resolve/main/ncnn/$name",
+        ),
+    )
+}
+ensureAssetFile(
+    target = layout.projectDirectory.file("src/main/assets/emoji/root.txt").asFile,
+    urls = listOf(
+        "https://raw.githubusercontent.com/florisboard/florisboard/main/app/src/main/assets/ime/media/emoji/root.txt",
+    ),
+)
+
 android {
     namespace = "com.litertime.android"
     compileSdk = 37
+    ndkVersion = "30.0.14904198"
 
     defaultConfig {
         applicationId = "com.litertime.android"
@@ -120,6 +178,22 @@ android {
         versionName = "0.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+        }
+        externalNativeBuild {
+            cmake {
+                arguments("-DCMAKE_BUILD_TYPE=Release")
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1+"
+        }
     }
 
     buildTypes {
@@ -147,6 +221,7 @@ android {
         jniLibs {
             pickFirsts.add("**/liblitertlm_jni.so")
             pickFirsts.add("**/libc++_shared.so")
+            pickFirsts.add("**/libomp.so")
         }
     }
 }
@@ -161,6 +236,7 @@ dependencies {
     implementation(files(sherpaOnnxAar))
     implementation(libs.litertlm)
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.recyclerview)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(platform(libs.androidx.compose.bom))

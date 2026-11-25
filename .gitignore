@@ -62,3 +62,7 @@ models/
 *.tflite
 *.onnx
 *.gguf
+
+# Native third-party prebuilts fetched by the build script
+app/third_party/
+app/src/main/assets/handwriting/*.part

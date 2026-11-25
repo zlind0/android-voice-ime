@@ -23,6 +23,8 @@ import com.litertime.android.LiteRtImeApp
 import com.litertime.android.accessibility.ScreenCaptureAccessibilityService
 import com.litertime.android.audio.AudioCaptureManager
 import com.litertime.android.audio.WavEncoder
+import com.litertime.android.handwriting.HandwritingPanelView
+import com.litertime.android.ime.traditional.EnglishKeyboardPanelView
 import com.litertime.android.inference.InferenceClient
 import com.litertime.android.inference.StreamListener
 import com.litertime.android.pipeline.VoiceMode
@@ -53,7 +55,7 @@ class LiteRtImeService : InputMethodService() {
     private val trailingPeriodStripper = TrailingPeriodStripper()
 
     private lateinit var inferenceClient: InferenceClient
-    private lateinit var overlayView: VoiceImeOverlayView
+    private lateinit var rootContainer: ImeRootContainerView
     private var statusCollectJob: Job? = null
 
     private val streamListener = object : StreamListener {
@@ -86,7 +88,7 @@ class LiteRtImeService : InputMethodService() {
                     }
                     trailingPeriodStripper.reset()
                     commitGuard.complete(requestId)
-                    overlayView.updateStatusBanner("", cancellable = false)
+                    rootContainer.voiceOverlayView.updateStatusBanner("", cancellable = false)
                 }
             }
         }
@@ -96,7 +98,7 @@ class LiteRtImeService : InputMethodService() {
                 if (commitGuard.activeId() == requestId) {
                     trailingPeriodStripper.reset()
                     commitGuard.complete(requestId)
-                    overlayView.updateStatusBanner("", cancellable = false)
+                    rootContainer.voiceOverlayView.updateStatusBanner("", cancellable = false)
                     Toast.makeText(this@LiteRtImeService, errorMessage, Toast.LENGTH_SHORT).show()
                 }
             }
@@ -114,6 +116,9 @@ class LiteRtImeService : InputMethodService() {
         cancelActiveRequest()
         audioCapture.cancel()
         statusCollectJob?.cancel()
+        if (::rootContainer.isInitialized) {
+            rootContainer.handwritingPanel.release()
+        }
         inferenceClient.removeListener(streamListener)
         inferenceClient.unbind()
         serviceScope.cancel()
@@ -133,134 +138,194 @@ class LiteRtImeService : InputMethodService() {
             }
         }
 
-        overlayView = VoiceImeOverlayView(this).apply {
-            listener = object : VoiceImeOverlayView.Listener {
-                override fun onSwitchKeyboardClick() {
-                    val switched = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        switchToPreviousInputMethod()
-                    } else {
-                        false
-                    }
-                    if (!switched) {
-                        onSwitchKeyboardLongClick()
-                    }
+        rootContainer = ImeRootContainerView(this)
+        rootContainer.applySettings(settingsStore().getSettings())
+
+        rootContainer.voiceOverlayView.listener = object : VoiceImeOverlayView.Listener {
+            override fun onToggleEnglishKeyboard() {
+                rootContainer.applySettings(settingsStore().getSettings())
+                rootContainer.toggleEnglishKeyboard()
+            }
+
+            override fun onToggleChineseHandwriting() {
+                rootContainer.applySettings(settingsStore().getSettings())
+                rootContainer.toggleChineseHandwriting()
+            }
+
+            override fun onShowSystemImePicker() {
+                val imm = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.showInputMethodPicker()
+            }
+
+            override fun onBackspaceClick() {
+                if (rootContainer.expandedMode == ExpandedPanelMode.CHINESE_HANDWRITING &&
+                    rootContainer.handwritingPanel.handleTopBarBackspace()
+                ) {
+                    return
+                }
+                performBackspace()
+            }
+
+            override fun onEnterClick() {
+                if (rootContainer.expandedMode == ExpandedPanelMode.CHINESE_HANDWRITING) {
+                    rootContainer.handwritingPanel.flushPendingCharacter()
+                }
+                performEnterAction()
+            }
+
+            override fun onStartRecording(source: MicSource): Boolean {
+                if (ContextCompat.checkSelfPermission(
+                        this@LiteRtImeService,
+                        Manifest.permission.RECORD_AUDIO,
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    Toast.makeText(
+                        this@LiteRtImeService,
+                        "请先授予麦克风权限",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    openSettingsActivity()
+                    return false
                 }
 
-                override fun onSwitchKeyboardLongClick() {
-                    val imm = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
-                    imm?.showInputMethodPicker()
-                }
+                cancelActiveRequest()
+                return audioCapture.start(
+                    onAmplitude = { amp -> rootContainer.voiceOverlayView.updateAmplitude(amp) },
+                    onError = { msg ->
+                        mainHandler.post {
+                            Toast.makeText(this@LiteRtImeService, msg, Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                )
+            }
 
-                override fun onBackspaceClick() {
-                    performBackspace()
+            override fun onFinishRecording(source: MicSource, action: RadialAction) {
+                val pcmBytes = audioCapture.stopAndCollectPcm()
+                if (action == RadialAction.CANCEL || action == RadialAction.NONE) {
+                    return
                 }
-
-                override fun onEnterClick() {
-                    sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
+                if (pcmBytes.size < WavEncoder.SAMPLE_RATE / 4) {
+                    Toast.makeText(
+                        this@LiteRtImeService,
+                        "说话时间太短，已忽略",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    return
                 }
+                dispatchVoiceRequest(source, action, pcmBytes)
+            }
 
-                override fun onStartRecording(source: MicSource): Boolean {
-                    if (ContextCompat.checkSelfPermission(
-                            this@LiteRtImeService,
-                            Manifest.permission.RECORD_AUDIO,
-                        ) != PackageManager.PERMISSION_GRANTED
-                    ) {
+            override fun onDragAppAction(source: MicSource, action: DragAppAction) {
+                audioCapture.cancel()
+                when (action) {
+                    DragAppAction.UNLOAD_WHISPER -> {
+                        inferenceClient.unloadEngine("ASR")
                         Toast.makeText(
                             this@LiteRtImeService,
-                            "请先授予麦克风权限",
+                            "正在卸载 Whisper 模型",
                             Toast.LENGTH_SHORT,
                         ).show()
-                        openSettingsActivity()
-                        return false
                     }
-
-                    cancelActiveRequest()
-                    return audioCapture.start(
-                        onAmplitude = { amp -> overlayView.updateAmplitude(amp) },
-                        onError = { msg ->
-                            mainHandler.post {
-                                Toast.makeText(this@LiteRtImeService, msg, Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                    )
-                }
-
-                override fun onFinishRecording(source: MicSource, action: RadialAction) {
-                    val pcmBytes = audioCapture.stopAndCollectPcm()
-                    if (action == RadialAction.CANCEL || action == RadialAction.NONE) {
-                        return
-                    }
-                    if (pcmBytes.size < WavEncoder.SAMPLE_RATE / 4) {
+                    DragAppAction.UNLOAD_GEMMA -> {
+                        inferenceClient.unloadEngine("LLM")
                         Toast.makeText(
                             this@LiteRtImeService,
-                            "说话时间太短，已忽略",
+                            "正在卸载 Gemma 4 模型",
                             Toast.LENGTH_SHORT,
                         ).show()
-                        return
                     }
-                    dispatchVoiceRequest(source, action, pcmBytes)
-                }
-
-                override fun onDragAppAction(source: MicSource, action: DragAppAction) {
-                    // The drag-down menu manages model residency, so the captured audio is dropped.
-                    audioCapture.cancel()
-                    when (action) {
-                        DragAppAction.UNLOAD_WHISPER -> {
-                            inferenceClient.unloadEngine("ASR")
-                            Toast.makeText(
-                                this@LiteRtImeService,
-                                "正在卸载 Whisper 模型",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        }
-                        DragAppAction.UNLOAD_GEMMA -> {
-                            inferenceClient.unloadEngine("LLM")
-                            Toast.makeText(
-                                this@LiteRtImeService,
-                                "正在卸载 Gemma 4 模型",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        }
-                        DragAppAction.RELOAD_GEMMA_GPU,
-                        DragAppAction.LOAD_GEMMA_GPU -> {
-                            inferenceClient.preloadModel(
-                                engineType = "LLM",
-                                modelId = resolveLocalLlmModelId(),
-                                forceGpu = true,
-                            )
-                            Toast.makeText(
-                                this@LiteRtImeService,
-                                "正在用 GPU 加载 Gemma 4…",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        }
+                    DragAppAction.RELOAD_GEMMA_GPU,
+                    DragAppAction.LOAD_GEMMA_GPU -> {
+                        inferenceClient.preloadModel(
+                            engineType = "LLM",
+                            modelId = resolveLocalLlmModelId(),
+                            forceGpu = true,
+                        )
+                        Toast.makeText(
+                            this@LiteRtImeService,
+                            "正在用 GPU 加载 Gemma 4…",
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     }
                 }
+            }
 
-                override fun onCancelActiveGeneration() {
-                    cancelActiveRequest()
-                }
+            override fun onCancelActiveGeneration() {
+                cancelActiveRequest()
+            }
 
-                override fun onTouchableRegionChanged() {
-                    overlayView.requestLayout()
-                }
+            override fun onTouchableRegionChanged() {
+                rootContainer.requestLayout()
             }
         }
 
-        ViewCompat.setOnApplyWindowInsetsListener(overlayView) { _, insets ->
+        rootContainer.englishKeyboardPanel.listener = object : EnglishKeyboardPanelView.Listener {
+            override fun onCommitText(text: String) {
+                currentInputConnection?.commitText(text, 1)
+            }
+
+            override fun onReplaceLastCharacters(deleteCount: Int, replacement: String) {
+                val ic = currentInputConnection ?: return
+                ic.beginBatchEdit()
+                ic.deleteSurroundingText(deleteCount, 0)
+                ic.commitText(replacement, 1)
+                ic.endBatchEdit()
+            }
+
+            override fun onBackspaceClick() {
+                performBackspace()
+            }
+
+            override fun onEnterClick() {
+                performEnterAction()
+            }
+
+            override fun getTextBeforeCursor(count: Int): CharSequence? =
+                currentInputConnection?.getTextBeforeCursor(count, 0)
+
+            override fun onRecentEmojiUsed(emoji: String) {
+                recordRecentEmoji(emoji)
+            }
+        }
+
+        rootContainer.handwritingPanel.listener = object : HandwritingPanelView.Listener {
+            override fun onCommitText(text: String) {
+                currentInputConnection?.commitText(text, 1)
+            }
+
+            override fun onReplaceLastText(deleteChars: Int, replacement: String) {
+                val ic = currentInputConnection ?: return
+                ic.beginBatchEdit()
+                if (deleteChars > 0) {
+                    ic.deleteSurroundingText(deleteChars, 0)
+                }
+                ic.commitText(replacement, 1)
+                ic.endBatchEdit()
+            }
+
+            override fun onBackspaceInEditor() {
+                performBackspace()
+            }
+
+            override fun onRecentEmojiUsed(emoji: String) {
+                recordRecentEmoji(emoji)
+            }
+        }
+
+        ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { _, insets ->
             val bars = insets.getInsets(
                 WindowInsetsCompat.Type.navigationBars() or WindowInsetsCompat.Type.displayCutout(),
             )
             val gestures = insets.getInsets(WindowInsetsCompat.Type.mandatorySystemGestures())
             val safeBottom = maxOf(bars.bottom, gestures.bottom)
-            overlayView.updateSystemInsets(
+            rootContainer.updateSystemInsets(
                 bottomPx = safeBottom,
                 leftPx = bars.left,
                 rightPx = bars.right,
             )
             insets
         }
-        overlayView.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+        rootContainer.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) {
                 ViewCompat.requestApplyInsets(v)
             }
@@ -271,8 +336,8 @@ class LiteRtImeService : InputMethodService() {
         statusCollectJob?.cancel()
         statusCollectJob = serviceScope.launch {
             inferenceClient.statusState.collectLatest { state ->
-                val settings = (application as LiteRtImeApp).settingsStore.getSettings()
-                overlayView.updateLoadedState(
+                val settings = settingsStore().getSettings()
+                rootContainer.voiceOverlayView.updateLoadedState(
                     isWhisperLoaded = state.asrLoaded,
                     isGemmaLoaded = state.llmLoaded,
                     isGemmaGpu = state.llmLoadedWithGpu,
@@ -280,25 +345,25 @@ class LiteRtImeService : InputMethodService() {
                     isOnlineMode = settings.llmProvider != LlmProviderType.LOCAL_LITERT,
                 )
                 if (commitGuard.activeId() != null && state.statusText.isNotBlank()) {
-                    overlayView.updateStatusBanner(state.statusText, cancellable = true)
+                    rootContainer.voiceOverlayView.updateStatusBanner(state.statusText, cancellable = true)
                 }
             }
         }
 
-        return overlayView
+        return rootContainer
     }
 
     override fun onComputeInsets(outInsets: Insets) {
         super.onComputeInsets(outInsets)
-        if (!::overlayView.isInitialized) return
-        val w = overlayView.width
-        val barTop = overlayView.getIdleTouchableTop()
-        val barBottom = overlayView.getIdleTouchableBottom()
+        if (!::rootContainer.isInitialized) return
+        val w = rootContainer.width
+        val barTop = rootContainer.getTouchableTop()
+        val barBottom = rootContainer.getTouchableBottom()
 
         outInsets.contentTopInsets = barTop
         outInsets.visibleTopInsets = barTop
         outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
-        if (overlayView.isRadialExpanded) {
+        if (rootContainer.isRadialExpanded) {
             outInsets.touchableRegion.set(0, 0, w, barBottom)
         } else {
             outInsets.touchableRegion.set(0, barTop, w, barBottom)
@@ -312,6 +377,26 @@ class LiteRtImeService : InputMethodService() {
             ic.commitText("", 1)
         } else {
             sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+        }
+    }
+
+    private fun performEnterAction() {
+        val info = currentInputEditorInfo
+        val action = (info?.imeOptions ?: 0) and EditorInfo.IME_MASK_ACTION
+        val noEnterAction = ((info?.imeOptions ?: 0) and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
+        if (!noEnterAction && action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED) {
+            if (currentInputConnection?.performEditorAction(action) == true) {
+                return
+            }
+        }
+        sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
+    }
+
+    private fun recordRecentEmoji(emoji: String) {
+        val updated = settingsStore().update { it.withAddedRecentEmoji(emoji) }
+        if (::rootContainer.isInitialized) {
+            rootContainer.englishKeyboardPanel.applySettings(updated)
+            rootContainer.handwritingPanel.applySettings(updated)
         }
     }
 
@@ -342,22 +427,45 @@ class LiteRtImeService : InputMethodService() {
         if (!restarting) {
             cancelActiveRequest()
         }
+        if (::rootContainer.isInitialized) {
+            rootContainer.applySettings(settingsStore().getSettings())
+            rootContainer.englishKeyboardPanel.onStartInput(attribute)
+        }
+    }
+
+    override fun onStartInputView(editorInfo: EditorInfo?, restarting: Boolean) {
+        super.onStartInputView(editorInfo, restarting)
+        if (::rootContainer.isInitialized) {
+            rootContainer.applySettings(settingsStore().getSettings())
+            rootContainer.englishKeyboardPanel.onStartInput(editorInfo)
+        }
     }
 
     override fun onFinishInput() {
         cancelActiveRequest()
+        if (::rootContainer.isInitialized) {
+            rootContainer.handwritingPanel.clearSession()
+        }
         super.onFinishInput()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
         audioCapture.cancel()
         cancelActiveRequest()
+        if (::rootContainer.isInitialized) {
+            rootContainer.handwritingPanel.flushPendingCharacter()
+            rootContainer.handwritingPanel.clearSession()
+        }
         super.onFinishInputView(finishingInput)
     }
 
     override fun onWindowHidden() {
         audioCapture.cancel()
         cancelActiveRequest()
+        if (::rootContainer.isInitialized) {
+            rootContainer.handwritingPanel.flushPendingCharacter()
+            rootContainer.handwritingPanel.clearSession()
+        }
         super.onWindowHidden()
     }
 
@@ -367,8 +475,8 @@ class LiteRtImeService : InputMethodService() {
         if (activeId != null) {
             inferenceClient.cancelRequest(activeId)
         }
-        if (::overlayView.isInitialized) {
-            overlayView.updateStatusBanner("", cancellable = false)
+        if (::rootContainer.isInitialized) {
+            rootContainer.voiceOverlayView.updateStatusBanner("", cancellable = false)
         }
     }
 
@@ -393,7 +501,7 @@ class LiteRtImeService : InputMethodService() {
         val modelId: String
         if (source == MicSource.WHISPER) {
             backendType = "ASR"
-            val configuredSpec = com.litertime.android.storage.ModelCatalog.findAsr(settings.activeAsrModelId)
+            val configuredSpec = ModelCatalog.findAsr(settings.activeAsrModelId)
             modelId = if (configuredSpec != null && storage.isAsrInstalled(configuredSpec)) {
                 configuredSpec.id
             } else {
@@ -410,7 +518,7 @@ class LiteRtImeService : InputMethodService() {
         val requestId = UUID.randomUUID().toString()
         commitGuard.startRequest(requestId)
         trailingPeriodStripper.reset()
-        overlayView.updateStatusBanner(
+        rootContainer.voiceOverlayView.updateStatusBanner(
             if (backendType == "ASR") "正在识别语音..." else "正在思考与润色...",
             cancellable = true,
         )
@@ -425,7 +533,7 @@ class LiteRtImeService : InputMethodService() {
             if (needsScreenshot) {
                 if (!ScreenCaptureAccessibilityService.isReady()) {
                     commitGuard.complete(requestId)
-                    overlayView.updateStatusBanner("", cancellable = false)
+                    rootContainer.voiceOverlayView.updateStatusBanner("", cancellable = false)
                     Toast.makeText(
                         this@LiteRtImeService,
                         "请先在设置中开启“LiteRT 语音输入法截屏辅助”无障碍服务",
@@ -433,21 +541,19 @@ class LiteRtImeService : InputMethodService() {
                     ).show()
                     return@launch
                 }
-                // Allow radial overlay collapse to redraw before capturing host screen
                 delay(90L)
                 val targetShot = File(ipcDir, "$requestId.jpg")
-                // Crop the screenshot at the top edge of the IME panel so none of our UI is captured.
                 val location = IntArray(2)
-                overlayView.getLocationOnScreen(location)
-                val panelTopPx = location[1] + overlayView.getIdleTouchableTop()
+                rootContainer.getLocationOnScreen(location)
+                val panelTopPx = location[1] + rootContainer.getTouchableTop()
                 screenshotFile = ScreenCaptureAccessibilityService.captureScreenshotToFile(
                     targetShot,
                     keepTopPx = if (panelTopPx > 0) panelTopPx else Int.MAX_VALUE,
                 )
                 if (screenshotFile == null) {
-                    Log.w(TAG, "Screenshot capture returned null; proceeding without image or aborting")
+                    Log.w(TAG, "Screenshot capture returned null; aborting")
                     commitGuard.complete(requestId)
-                    overlayView.updateStatusBanner("", cancellable = false)
+                    rootContainer.voiceOverlayView.updateStatusBanner("", cancellable = false)
                     Toast.makeText(
                         this@LiteRtImeService,
                         "截屏失败，请确认无障碍服务权限正常",
@@ -482,7 +588,7 @@ class LiteRtImeService : InputMethodService() {
             )
             if (!dispatched) {
                 commitGuard.complete(requestId)
-                overlayView.updateStatusBanner("", cancellable = false)
+                rootContainer.voiceOverlayView.updateStatusBanner("", cancellable = false)
                 wavFile.delete()
                 screenshotFile?.delete()
                 Toast.makeText(

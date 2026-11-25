@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Draw
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Keyboard
@@ -61,6 +62,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -101,6 +103,8 @@ import com.litertime.android.inference.InferenceClient
 import com.litertime.android.inference.StreamListener
 import com.litertime.android.pipeline.PromptTemplates
 import com.litertime.android.pipeline.VoiceMode
+import com.litertime.android.settings.HandwritingInkColor
+import com.litertime.android.settings.ImeSettings
 import com.litertime.android.settings.LlmProviderType
 import com.litertime.android.storage.DownloadMirror
 import com.litertime.android.storage.DownloadState
@@ -248,6 +252,7 @@ private enum class SettingsPage(val title: String) {
     SERVICE("独立推理引擎状态"),
     MODELS("模型下载与选择"),
     INPUT("输入设置"),
+    TRADITIONAL_INPUT("手写与键盘设置"),
     ONLINE("在线大模型接口"),
     PROMPTS("提示词编辑"),
     DEBUG("AI 请求调试与回放"),
@@ -481,6 +486,14 @@ private fun LiteRtImeSettingsScreen(
 
     val inputPreview = if (settings.stripTrailingPeriod) "句尾句号已去除" else "保留句尾句号"
 
+    val traditionalInputPreview = buildString {
+        append(String.format(Locale.US, "手写淡出 %.1fs", settings.handwritingFadeDelayMs / 1000f))
+        append(" · ")
+        append(if (settings.handwritingAutoCommitFirst) "首字上屏" else "手动选字")
+        append(" · ")
+        append(if (settings.keyboardShowNumberRow) "含数字行" else "标准 QWERTY")
+    }
+
     val onlinePreview = buildString {
         append(settings.llmProvider.displayName)
         if (settings.llmProvider != LlmProviderType.LOCAL_LITERT) {
@@ -564,6 +577,12 @@ private fun LiteRtImeSettingsScreen(
                     title = "输入设置",
                     preview = inputPreview,
                     onClick = { currentPage = SettingsPage.INPUT },
+                )
+                SettingsHomeItem(
+                    icon = { Icon(Icons.Rounded.Draw, contentDescription = null) },
+                    title = "手写与键盘设置",
+                    preview = traditionalInputPreview,
+                    onClick = { currentPage = SettingsPage.TRADITIONAL_INPUT },
                 )
                 SettingsHomeItem(
                     icon = { Icon(Icons.Rounded.Cloud, contentDescription = null) },
@@ -1005,6 +1024,269 @@ private fun LiteRtImeSettingsScreen(
                     )
                 }
             }
+            }
+
+            // Traditional input settings: Chinese handwriting + English QWERTY keyboard
+            if (currentPage == SettingsPage.TRADITIONAL_INPUT) {
+                SectionCard(title = "中文手写 (Handwritten)") {
+                    Text(
+                        text = String.format(
+                            Locale.US,
+                            "写完淡出延迟：%.1f 秒（默认 1.0 秒）",
+                            settings.handwritingFadeDelayMs / 1000f,
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = "一笔一划停笔后等待多长时间自动淡出并准备写下一个字",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Slider(
+                        value = settings.handwritingFadeDelayMs.toFloat(),
+                        onValueChange = { raw ->
+                            val snapped = ((raw / 100f).toInt() * 100).coerceIn(
+                                ImeSettings.MIN_HANDWRITING_FADE_DELAY_MS,
+                                ImeSettings.MAX_HANDWRITING_FADE_DELAY_MS,
+                            )
+                            settings = settingsStore.update { it.copy(handwritingFadeDelayMs = snapped) }
+                        },
+                        valueRange = ImeSettings.MIN_HANDWRITING_FADE_DELAY_MS.toFloat()..
+                            ImeSettings.MAX_HANDWRITING_FADE_DELAY_MS.toFloat(),
+                        steps = (ImeSettings.MAX_HANDWRITING_FADE_DELAY_MS -
+                            ImeSettings.MIN_HANDWRITING_FADE_DELAY_MS) / 100 - 1,
+                    )
+
+                    HorizontalDivider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("默认首字自动上屏", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = "淡出时自动将首选候选字写入输入框，之后仍可点选其他候选替换",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = settings.handwritingAutoCommitFirst,
+                            onCheckedChange = { checked ->
+                                settings = settingsStore.update { it.copy(handwritingAutoCommitFirst = checked) }
+                            },
+                        )
+                    }
+
+                    HorizontalDivider()
+                    Text(
+                        text = String.format(Locale.US, "笔迹粗细：%.1f dp", settings.handwritingStrokeWidthDp),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Slider(
+                        value = settings.handwritingStrokeWidthDp,
+                        onValueChange = { raw ->
+                            val snapped = ((raw * 2f).toInt() / 2f).coerceIn(
+                                ImeSettings.MIN_HANDWRITING_STROKE_WIDTH_DP,
+                                ImeSettings.MAX_HANDWRITING_STROKE_WIDTH_DP,
+                            )
+                            settings = settingsStore.update { it.copy(handwritingStrokeWidthDp = snapped) }
+                        },
+                        valueRange = ImeSettings.MIN_HANDWRITING_STROKE_WIDTH_DP..
+                            ImeSettings.MAX_HANDWRITING_STROKE_WIDTH_DP,
+                    )
+
+                    HorizontalDivider()
+                    Text("笔迹颜色", style = MaterialTheme.typography.bodyMedium)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        HandwritingInkColor.entries.forEach { ink ->
+                            FilterChip(
+                                selected = settings.handwritingInkColor == ink,
+                                onClick = {
+                                    settings = settingsStore.update { it.copy(handwritingInkColor = ink) }
+                                },
+                                label = { Text(ink.displayName) },
+                            )
+                        }
+                    }
+
+                    HorizontalDivider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("显示田字格辅助线", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = "在手写板中显示虚线十字参考线",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = settings.handwritingShowGrid,
+                            onCheckedChange = { checked ->
+                                settings = settingsStore.update { it.copy(handwritingShowGrid = checked) }
+                            },
+                        )
+                    }
+
+                    HorizontalDivider()
+                    Text(
+                        text = "手写板高度：${settings.handwritingPanelHeightDp} dp",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Slider(
+                        value = settings.handwritingPanelHeightDp.toFloat(),
+                        onValueChange = { raw ->
+                            val snapped = ((raw / 10f).toInt() * 10).coerceIn(
+                                ImeSettings.MIN_HANDWRITING_PANEL_HEIGHT_DP,
+                                ImeSettings.MAX_HANDWRITING_PANEL_HEIGHT_DP,
+                            )
+                            settings = settingsStore.update { it.copy(handwritingPanelHeightDp = snapped) }
+                        },
+                        valueRange = ImeSettings.MIN_HANDWRITING_PANEL_HEIGHT_DP.toFloat()..
+                            ImeSettings.MAX_HANDWRITING_PANEL_HEIGHT_DP.toFloat(),
+                        steps = (ImeSettings.MAX_HANDWRITING_PANEL_HEIGHT_DP -
+                            ImeSettings.MIN_HANDWRITING_PANEL_HEIGHT_DP) / 10 - 1,
+                    )
+                }
+
+                SectionCard(title = "英文键盘 (FlorisBoard 方案)") {
+                    Text(
+                        text = "键盘高度：${settings.keyboardHeightDp} dp",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Slider(
+                        value = settings.keyboardHeightDp.toFloat(),
+                        onValueChange = { raw ->
+                            val snapped = ((raw / 10f).toInt() * 10).coerceIn(
+                                ImeSettings.MIN_KEYBOARD_HEIGHT_DP,
+                                ImeSettings.MAX_KEYBOARD_HEIGHT_DP,
+                            )
+                            settings = settingsStore.update { it.copy(keyboardHeightDp = snapped) }
+                        },
+                        valueRange = ImeSettings.MIN_KEYBOARD_HEIGHT_DP.toFloat()..
+                            ImeSettings.MAX_KEYBOARD_HEIGHT_DP.toFloat(),
+                        steps = (ImeSettings.MAX_KEYBOARD_HEIGHT_DP -
+                            ImeSettings.MIN_KEYBOARD_HEIGHT_DP) / 10 - 1,
+                    )
+
+                    HorizontalDivider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("显示顶部数字行 (1–0)", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = "在 QWERTY 字母上方额外显示一行数字键",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = settings.keyboardShowNumberRow,
+                            onCheckedChange = { checked ->
+                                settings = settingsStore.update { it.copy(keyboardShowNumberRow = checked) }
+                            },
+                        )
+                    }
+
+                    HorizontalDivider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("按键振动反馈", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = "按键、标点及手写选字时提供轻触震动",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = settings.keyboardHapticEnabled,
+                            onCheckedChange = { checked ->
+                                settings = settingsStore.update { it.copy(keyboardHapticEnabled = checked) }
+                            },
+                        )
+                    }
+
+                    HorizontalDivider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("按键弹窗预览", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = "按下字母键时上方显示当前字符气泡（无长按符号）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = settings.keyboardKeyPopupEnabled,
+                            onCheckedChange = { checked ->
+                                settings = settingsStore.update { it.copy(keyboardKeyPopupEnabled = checked) }
+                            },
+                        )
+                    }
+
+                    HorizontalDivider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("句首自动大写", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = "在句首自动切换为 Shift 大写状态",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = settings.keyboardAutoCapsEnabled,
+                            onCheckedChange = { checked ->
+                                settings = settingsStore.update { it.copy(keyboardAutoCapsEnabled = checked) }
+                            },
+                        )
+                    }
+
+                    HorizontalDivider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("双击空格输入句号", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = "英文输入时连续按两次空格自动替换为「. 」",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = settings.keyboardDoubleSpacePeriod,
+                            onCheckedChange = { checked ->
+                                settings = settingsStore.update { it.copy(keyboardDoubleSpacePeriod = checked) }
+                            },
+                        )
+                    }
+                }
             }
 
             // 5. Reserved Online LLM Settings
