@@ -179,9 +179,12 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
-        }
+        // Only the ABIs that can actually run the bundled runtimes are packaged.
+        // sherpa-onnx's AAR ships armeabi-v7a/x86 too, but litertlm only ships
+        // arm64-v8a and x86_64, so 32-bit builds would install a keyboard whose
+        // AI features can never load. The `splits` block below turns each ABI
+        // into its own APK, so the arm64 package never carries x86_64 libraries.
+        // (AGP 9 rejects ndk.abiFilters together with splits.abi.include.)
         externalNativeBuild {
             cmake {
                 arguments("-DCMAKE_BUILD_TYPE=Release")
@@ -196,12 +199,39 @@ android {
         }
     }
 
+    // One APK per ABI so an arm64 install never carries x86_64 libraries.
+    // `isUniversalApk = false` keeps a single fat APK from being produced.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "x86_64")
+            isUniversalApk = false
+        }
+    }
+
     buildTypes {
-        release {
-            isMinifyEnabled = false
+        // Debug is also shrunk: material-icons-extended contributes thousands of
+        // unused icon classes to the dex, and R8 removes them automatically.
+        // Obfuscation stays off (proguard-debug.pro) so stack traces stay readable.
+        debug {
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                "proguard-rules.pro",
+                "proguard-debug.pro",
+            )
+        }
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // Signed with the local debug key so `assembleRelease` can be
+            // sideloaded directly; replace with a real keystore for distribution.
+            signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
             )
         }
     }
@@ -234,7 +264,12 @@ kotlin {
 
 dependencies {
     implementation(files(sherpaOnnxAar))
-    implementation(libs.litertlm)
+    implementation(libs.litertlm) {
+        // Pulled in by litertlm's ReflectionTool (function calling), which this
+        // app never uses. R8 keeps the litertlm classes we need; excluding the
+        // artifact here removes ~3 MB of reflection support from the dex.
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
+    }
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.recyclerview)
     implementation(libs.androidx.activity.compose)
@@ -244,6 +279,10 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    // Kept as a normal dependency: R8 keeps only the icons that are actually
+    // referenced, so adding a new icon later is just an import with no manual
+    // "copy the vector out of the library" step. This works for debug too
+    // because debug builds are minified (see buildTypes above).
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
