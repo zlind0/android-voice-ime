@@ -1,6 +1,8 @@
 package com.litertime.android.settings
 
 import com.litertime.android.pipeline.VoiceMode
+import com.litertime.android.pipeline.online.OnlineProviderDialect
+import com.litertime.android.pipeline.online.ThinkingEffort
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -127,6 +129,64 @@ class OnlineLlmSettingsTest {
                 "vendor/vision-model",
                 reloaded.onlineConfigFor(VoiceMode.GEMMA_SCREENSHOT_INSTRUCTION).modelName,
             )
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun generationParametersRoundTripAndInheritPerMode() {
+        val dir = Files.createTempDirectory("ime-online-generation-test").toFile()
+        try {
+            val store = ImeSettingsStore(dir)
+            val defaults = store.getSettings()
+            assertEquals(ResolvedOnlineLlmConfig.DEFAULT_MAX_TOKENS, defaults.onlineMaxTokens)
+            assertEquals(
+                ResolvedOnlineLlmConfig.DEFAULT_TEMPERATURE,
+                defaults.onlineTemperature,
+                0.0001,
+            )
+            assertFalse(defaults.onlineThinkingEnabled)
+
+            store.saveSettings(
+                ImeSettings(
+                    onlineModelName = "deepseek-v4-pro",
+                    onlineMaxTokens = 4096,
+                    onlineTemperature = 0.7,
+                    onlineThinkingEnabled = true,
+                    onlineThinkingEffort = ThinkingEffort.HIGH,
+                    onlineProviderDialect = OnlineProviderDialect.MOONSHOT,
+                    onlinePerModeModels = true,
+                    onlineOverrides = mapOf(
+                        OnlineLlmModelProfile.POLISH to OnlineLlmOverride(
+                            maxTokens = 2048,
+                            thinkingEnabled = false,
+                            providerDialect = OnlineProviderDialect.OPENROUTER,
+                        ),
+                    ),
+                ),
+            )
+
+            val reloaded = ImeSettingsStore(dir).getSettings()
+            assertEquals(4096, reloaded.onlineMaxTokens)
+            assertEquals(0.7, reloaded.onlineTemperature, 0.0001)
+            assertTrue(reloaded.onlineThinkingEnabled)
+            assertEquals(ThinkingEffort.HIGH, reloaded.onlineThinkingEffort)
+            assertEquals(OnlineProviderDialect.MOONSHOT, reloaded.onlineProviderDialect)
+
+            val unified = reloaded.onlineUnifiedConfig
+            assertEquals(4096, unified.maxTokens)
+            assertEquals(ThinkingEffort.HIGH, unified.thinkingEffort)
+            assertEquals(OnlineProviderDialect.MOONSHOT, unified.providerDialect)
+
+            // Only the explicitly overridden values differ; the rest inherits the unified config.
+            val polish = reloaded.onlineConfigFor(VoiceMode.GEMMA_POLISH_FORMAL)
+            assertEquals(2048, polish.maxTokens)
+            assertFalse(polish.thinkingEnabled)
+            assertEquals(0.7, polish.temperature, 0.0001)
+            assertEquals(ThinkingEffort.HIGH, polish.thinkingEffort)
+            // Provider adaptation is per profile so each endpoint can be detected independently.
+            assertEquals(OnlineProviderDialect.OPENROUTER, polish.providerDialect)
         } finally {
             dir.deleteRecursively()
         }

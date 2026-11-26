@@ -5,6 +5,7 @@ import android.util.Base64
 import android.util.Log
 import com.litertime.android.pipeline.online.OnlineLlmApi
 import com.litertime.android.pipeline.online.OnlineLlmApiException
+import com.litertime.android.pipeline.online.OnlineRequestOptions
 import com.litertime.android.settings.ImeSettingsStore
 import com.litertime.android.settings.ResolvedOnlineLlmConfig
 import com.litertime.android.vision.ImageEncoder
@@ -241,13 +242,21 @@ class OnlineLlmBackend(
         }
         messages.put(userMessage)
 
-        return JSONObject()
+        val body = JSONObject()
             .put("model", config.modelName)
             .put("messages", messages)
             .put("stream", true)
-            .put("temperature", 0.35)
-            .put("max_tokens", 1024)
-            .toString()
+        OnlineRequestOptions.apply(
+            body = body,
+            baseUrl = config.baseUrl,
+            modelName = config.modelName,
+            maxTokens = config.maxTokens,
+            temperature = config.temperature,
+            providerDialect = config.providerDialect,
+            thinkingEnabled = config.thinkingEnabled,
+            thinkingEffort = config.thinkingEffort,
+        )
+        return body.toString()
     }
 
     private fun encodeScreenshotDataUrl(file: java.io.File): String? = runCatching {

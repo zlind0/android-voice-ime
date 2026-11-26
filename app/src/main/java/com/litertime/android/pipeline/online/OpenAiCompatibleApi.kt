@@ -104,7 +104,14 @@ object OnlineLlmApi {
         parseModelIds(json)
     }
 
-    suspend fun testHello(baseUrl: String, apiKey: String, modelName: String): String =
+    suspend fun testHello(
+        baseUrl: String,
+        apiKey: String,
+        modelName: String,
+        thinkingEnabled: Boolean = false,
+        thinkingEffort: ThinkingEffort = ThinkingEffort.MEDIUM,
+        providerDialect: OnlineProviderDialect = OnlineProviderDialect.AUTO,
+    ): String =
         withContext(Dispatchers.IO) {
             val messages = JSONArray().put(
                 JSONObject()
@@ -114,8 +121,18 @@ object OnlineLlmApi {
             val body = JSONObject()
                 .put("model", modelName.trim())
                 .put("messages", messages)
-                .put("temperature", 0.0)
-                .put("max_tokens", 32)
+                .also {
+                    OnlineRequestOptions.apply(
+                        body = it,
+                        baseUrl = baseUrl,
+                        modelName = modelName,
+                        maxTokens = 32,
+                        temperature = 0.0,
+                        providerDialect = providerDialect,
+                        thinkingEnabled = thinkingEnabled,
+                        thinkingEffort = thinkingEffort,
+                    )
+                }
                 .toString()
             val json = executeJson(
                 Request.Builder()

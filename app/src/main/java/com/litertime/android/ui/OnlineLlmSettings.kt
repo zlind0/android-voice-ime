@@ -1,7 +1,9 @@
 package com.litertime.android.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,7 +29,14 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,6 +57,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,6 +67,10 @@ import com.litertime.android.pipeline.online.OnlineBalance
 import com.litertime.android.pipeline.online.OnlineLlmApi
 import com.litertime.android.pipeline.online.OnlineModelGroup
 import com.litertime.android.pipeline.online.OnlineModelGroups
+import com.litertime.android.pipeline.online.OnlineProviderDialect
+import com.litertime.android.pipeline.online.OnlineRequestOptions
+import com.litertime.android.pipeline.online.OnlineThinkingSupport
+import com.litertime.android.pipeline.online.ThinkingEffort
 import com.litertime.android.settings.ImeSettings
 import com.litertime.android.settings.OnlineLlmModelProfile
 import com.litertime.android.settings.ResolvedOnlineLlmConfig
@@ -123,9 +137,46 @@ internal fun OnlineLlmSettingsPage(
             placeholderApiKey = "可留空",
             placeholderModel = "例如 gpt-4o-mini",
             effective = settings.onlineUnifiedConfig,
+            inherited = null,
+            maxTokens = settings.onlineMaxTokens,
+            temperature = settings.onlineTemperature,
+            thinkingEnabled = settings.onlineThinkingEnabled,
+            thinkingEffort = settings.onlineThinkingEffort,
+            providerDialect = settings.onlineProviderDialect,
             onBaseUrlChange = { value -> onUpdate { it.copy(onlineBaseUrl = value) } },
             onApiKeyChange = { value -> onUpdate { it.copy(onlineApiKey = value) } },
             onModelNameChange = { value -> onUpdate { it.copy(onlineModelName = value) } },
+            onMaxTokensChange = { value ->
+                onUpdate {
+                    it.copy(
+                        onlineMaxTokens = (value ?: ResolvedOnlineLlmConfig.DEFAULT_MAX_TOKENS)
+                            .coerceIn(
+                                ResolvedOnlineLlmConfig.MIN_MAX_TOKENS,
+                                ResolvedOnlineLlmConfig.MAX_MAX_TOKENS,
+                            ),
+                    )
+                }
+            },
+            onTemperatureChange = { value ->
+                onUpdate {
+                    it.copy(
+                        onlineTemperature = (value ?: ResolvedOnlineLlmConfig.DEFAULT_TEMPERATURE)
+                            .coerceIn(
+                                ResolvedOnlineLlmConfig.MIN_TEMPERATURE,
+                                ResolvedOnlineLlmConfig.MAX_TEMPERATURE,
+                            ),
+                    )
+                }
+            },
+            onThinkingEnabledChange = { value ->
+                if (value != null) onUpdate { it.copy(onlineThinkingEnabled = value) }
+            },
+            onThinkingEffortChange = { value ->
+                if (value != null) onUpdate { it.copy(onlineThinkingEffort = value) }
+            },
+            onProviderDialectChange = { value ->
+                onUpdate { it.copy(onlineProviderDialect = value) }
+            },
         )
 
         SettingsCard {
@@ -173,6 +224,12 @@ internal fun OnlineLlmSettingsPage(
                     placeholderApiKey = "（默认）",
                     placeholderModel = unified.modelName.ifBlank { "统一 Model 未配置" },
                     effective = override.resolve(unified),
+                    inherited = unified,
+                    maxTokens = override.maxTokens,
+                    temperature = override.temperature,
+                    thinkingEnabled = override.thinkingEnabled,
+                    thinkingEffort = override.thinkingEffort,
+                    providerDialect = override.providerDialect,
                     onBaseUrlChange = { value ->
                         onUpdate { it.withOnlineOverride(profile, override.copy(baseUrl = value)) }
                     },
@@ -181,6 +238,27 @@ internal fun OnlineLlmSettingsPage(
                     },
                     onModelNameChange = { value ->
                         onUpdate { it.withOnlineOverride(profile, override.copy(modelName = value)) }
+                    },
+                    onMaxTokensChange = { value ->
+                        onUpdate { it.withOnlineOverride(profile, override.copy(maxTokens = value)) }
+                    },
+                    onTemperatureChange = { value ->
+                        onUpdate { it.withOnlineOverride(profile, override.copy(temperature = value)) }
+                    },
+                    onThinkingEnabledChange = { value ->
+                        onUpdate {
+                            it.withOnlineOverride(profile, override.copy(thinkingEnabled = value))
+                        }
+                    },
+                    onThinkingEffortChange = { value ->
+                        onUpdate {
+                            it.withOnlineOverride(profile, override.copy(thinkingEffort = value))
+                        }
+                    },
+                    onProviderDialectChange = { value ->
+                        onUpdate {
+                            it.withOnlineOverride(profile, override.copy(providerDialect = value))
+                        }
                     },
                 )
             }
@@ -402,9 +480,21 @@ private fun OnlineEndpointEditor(
     placeholderApiKey: String,
     placeholderModel: String,
     effective: ResolvedOnlineLlmConfig,
+    /** Non-null for a per-mode override: null fields inherit from this unified configuration. */
+    inherited: ResolvedOnlineLlmConfig?,
+    maxTokens: Int?,
+    temperature: Double?,
+    thinkingEnabled: Boolean?,
+    thinkingEffort: ThinkingEffort?,
+    providerDialect: OnlineProviderDialect,
     onBaseUrlChange: (String) -> Unit,
     onApiKeyChange: (String) -> Unit,
     onModelNameChange: (String) -> Unit,
+    onMaxTokensChange: (Int?) -> Unit,
+    onTemperatureChange: (Double?) -> Unit,
+    onThinkingEnabledChange: (Boolean?) -> Unit,
+    onThinkingEffortChange: (ThinkingEffort?) -> Unit,
+    onProviderDialectChange: (OnlineProviderDialect) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var apiKeyVisible by remember { mutableStateOf(false) }
@@ -471,7 +561,14 @@ private fun OnlineEndpointEditor(
             testing = true
             testResult = null
             runCatching {
-                OnlineLlmApi.testHello(effective.baseUrl, effective.apiKey, effective.modelName)
+                OnlineLlmApi.testHello(
+                    baseUrl = effective.baseUrl,
+                    apiKey = effective.apiKey,
+                    modelName = effective.modelName,
+                    thinkingEnabled = effective.thinkingEnabled,
+                    thinkingEffort = effective.thinkingEffort,
+                    providerDialect = effective.providerDialect,
+                )
             }.onSuccess { reply ->
                 testSucceeded = true
                 testResult = "连接成功：$reply"
@@ -590,6 +687,21 @@ private fun OnlineEndpointEditor(
             )
         }
 
+        GenerationParamsSection(
+            effective = effective,
+            inherited = inherited,
+            maxTokens = maxTokens,
+            temperature = temperature,
+            thinkingEnabled = thinkingEnabled,
+            thinkingEffort = thinkingEffort,
+            providerDialect = providerDialect,
+            onMaxTokensChange = onMaxTokensChange,
+            onTemperatureChange = onTemperatureChange,
+            onThinkingEnabledChange = onThinkingEnabledChange,
+            onThinkingEffortChange = onThinkingEffortChange,
+            onProviderDialectChange = onProviderDialectChange,
+        )
+
         HorizontalDivider(
             color = MaterialTheme.colorScheme.outlineVariant,
             thickness = 0.75.dp,
@@ -684,6 +796,311 @@ private fun OnlineEndpointEditor(
         )
     }
 }
+
+/**
+ * Max Tokens / Temperature plus the thinking switch and effort level. The thinking controls are
+ * only rendered for models that expose a thinking configuration; per-mode overrides can inherit
+ * every value from the unified configuration.
+ */
+@Composable
+private fun GenerationParamsSection(
+    effective: ResolvedOnlineLlmConfig,
+    inherited: ResolvedOnlineLlmConfig?,
+    maxTokens: Int?,
+    temperature: Double?,
+    thinkingEnabled: Boolean?,
+    thinkingEffort: ThinkingEffort?,
+    providerDialect: OnlineProviderDialect,
+    onMaxTokensChange: (Int?) -> Unit,
+    onTemperatureChange: (Double?) -> Unit,
+    onThinkingEnabledChange: (Boolean?) -> Unit,
+    onThinkingEffortChange: (ThinkingEffort?) -> Unit,
+    onProviderDialectChange: (OnlineProviderDialect) -> Unit,
+) {
+    var maxTokensText by remember { mutableStateOf(maxTokens?.toString().orEmpty()) }
+    var temperatureText by remember { mutableStateOf(temperature?.toString().orEmpty()) }
+    val supportsThinking = remember(effective.modelName) {
+        OnlineThinkingSupport.supportsThinking(effective.modelName)
+    }
+    val autoDialect = remember(effective.baseUrl, effective.modelName) {
+        OnlineRequestOptions.detectDialect(effective.baseUrl, effective.modelName)
+    }
+    val resolvedThinkingEnabled = thinkingEnabled ?: inherited?.thinkingEnabled ?: false
+    val resolvedThinkingEffort = thinkingEffort ?: inherited?.thinkingEffort ?: ThinkingEffort.MEDIUM
+
+    Text(
+        text = "生成参数",
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold,
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedTextField(
+            value = maxTokensText,
+            onValueChange = { raw ->
+                val digits = raw.filter { it.isDigit() }.take(6)
+                val parsed = digits.toIntOrNull()
+                val clamped = parsed?.coerceIn(
+                    ResolvedOnlineLlmConfig.MIN_MAX_TOKENS,
+                    ResolvedOnlineLlmConfig.MAX_MAX_TOKENS,
+                )
+                maxTokensText = if (parsed != null && clamped != parsed) {
+                    clamped.toString()
+                } else {
+                    digits
+                }
+                onMaxTokensChange(clamped)
+            },
+            label = { Text("Max Tokens") },
+            placeholder = {
+                Text(
+                    (inherited?.maxTokens ?: ResolvedOnlineLlmConfig.DEFAULT_MAX_TOKENS).toString(),
+                )
+            },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.weight(1f),
+        )
+        OutlinedTextField(
+            value = temperatureText,
+            onValueChange = { raw ->
+                val filtered = filterTemperatureInput(raw)
+                val parsed = filtered.toDoubleOrNull()
+                val clamped = parsed?.coerceIn(
+                    ResolvedOnlineLlmConfig.MIN_TEMPERATURE,
+                    ResolvedOnlineLlmConfig.MAX_TEMPERATURE,
+                )
+                temperatureText = if (parsed != null && clamped != parsed) {
+                    clamped.toString()
+                } else {
+                    filtered
+                }
+                onTemperatureChange(clamped)
+            },
+            label = { Text("Temperature") },
+            placeholder = {
+                Text(
+                    (inherited?.temperature ?: ResolvedOnlineLlmConfig.DEFAULT_TEMPERATURE)
+                        .toString(),
+                )
+            },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            modifier = Modifier.weight(1f),
+        )
+    }
+    Text(
+        text = "Max Tokens 限制单次回复长度（默认 8000）；Temperature 越低越稳定（默认 0.35）。" +
+            if (inherited != null) "留空沿用统一配置。" else "",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    ProviderDialectSelector(
+        selected = providerDialect,
+        autoDetected = autoDialect,
+        onSelect = onProviderDialectChange,
+    )
+    Text(
+        text = "自动会按 Endpoint 域名与模型名识别思考参数格式；使用代理或自定义模型名时可手动指定。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    if (supportsThinking) {
+        if (inherited == null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "启用思考",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        text = "关闭后不额外发送思考参数；部分服务商默认仍会思考。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = resolvedThinkingEnabled,
+                    onCheckedChange = onThinkingEnabledChange,
+                    colors = pastelSwitchColors(),
+                )
+            }
+        } else {
+            Text(
+                text = "启用思考",
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SettingsChip(
+                    selected = thinkingEnabled == null,
+                    onClick = { onThinkingEnabledChange(null) },
+                ) { Text("跟随统一") }
+                SettingsChip(
+                    selected = thinkingEnabled == true,
+                    onClick = { onThinkingEnabledChange(true) },
+                ) { Text("开启") }
+                SettingsChip(
+                    selected = thinkingEnabled == false,
+                    onClick = { onThinkingEnabledChange(false) },
+                ) { Text("关闭") }
+            }
+            Text(
+                text = "「跟随统一」使用统一配置的思考开关。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        if (resolvedThinkingEnabled) {
+            Text(
+                text = "思考强度",
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (inherited != null) {
+                    SettingsChip(
+                        selected = thinkingEffort == null,
+                        onClick = { onThinkingEffortChange(null) },
+                    ) { Text("跟随统一") }
+                }
+                ThinkingEffort.entries.forEach { effort ->
+                    SettingsChip(
+                        selected = if (inherited != null) {
+                            thinkingEffort == effort
+                        } else {
+                            resolvedThinkingEffort == effort
+                        },
+                        onClick = { onThinkingEffortChange(effort) },
+                    ) { Text(effort.displayName) }
+                }
+            }
+        }
+    } else {
+        Text(
+            text = if (effective.modelName.isBlank()) {
+                "选择模型后显示思考参数（仅支持思考的模型可配置）。"
+            } else {
+                "当前模型不支持思考参数配置。"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** Provider adaptation dropdown. "自动" shows the dialect the heuristics currently detect. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProviderDialectSelector(
+    selected: OnlineProviderDialect,
+    autoDetected: OnlineProviderDialect,
+    onSelect: (OnlineProviderDialect) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    fun labelFor(dialect: OnlineProviderDialect): String =
+        if (dialect == OnlineProviderDialect.AUTO) {
+            "自动（${autoDetected.displayName}）"
+        } else {
+            dialect.displayName
+        }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+    ) {
+        OutlinedTextField(
+            value = labelFor(selected),
+            onValueChange = {},
+            readOnly = true,
+            singleLine = true,
+            label = { Text("服务商适配") },
+            trailingIcon = {
+                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+            },
+            modifier = Modifier
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                .fillMaxWidth(),
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            OnlineProviderDialect.entries.forEach { dialect ->
+                DropdownMenuItem(
+                    text = { Text(labelFor(dialect)) },
+                    onClick = {
+                        onSelect(dialect)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** Digits plus at most one decimal point, capped to a sane length. */
+private fun filterTemperatureInput(raw: String): String = buildString {
+    var hasDot = false
+    for (ch in raw) {
+        if (length >= 5) break
+        when {
+            ch.isDigit() -> append(ch)
+            ch == '.' && !hasDot -> {
+                hasDot = true
+                append(ch)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsChip(
+    selected: Boolean,
+    onClick: () -> Unit,
+    label: @Composable () -> Unit,
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = label,
+        border = null,
+        colors = FilterChipDefaults.filterChipColors(
+            containerColor = Color(PastelPalette.SURFACE_CHIP_IDLE),
+            labelColor = Color(PastelPalette.TEXT_ON_DARK_SKY),
+            selectedContainerColor = Color(PastelPalette.SKY_BLUE),
+            selectedLabelColor = Color(PastelPalette.INK_ON_PASTEL),
+        ),
+    )
+}
+
+@Composable
+private fun pastelSwitchColors() = SwitchDefaults.colors(
+    checkedThumbColor = Color(PastelPalette.INK_ON_PASTEL),
+    checkedTrackColor = Color(PastelPalette.SKY_BLUE),
+    checkedBorderColor = Color.Transparent,
+    uncheckedThumbColor = Color(PastelPalette.TEXT_MUTED),
+    uncheckedTrackColor = Color(PastelPalette.SURFACE_CHIP_IDLE),
+    uncheckedBorderColor = Color.Transparent,
+)
 
 @Composable
 private fun OnlineModelPickerDialog(

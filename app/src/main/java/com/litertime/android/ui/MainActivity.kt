@@ -1860,6 +1860,11 @@ private fun LiteRtImeSettingsScreen(
                             modelName = selectedLogEntry.modelId.ifBlank {
                                 currentOnlineConfig.modelName
                             },
+                            maxTokens = currentOnlineConfig.maxTokens,
+                            temperature = currentOnlineConfig.temperature,
+                            thinkingEnabled = currentOnlineConfig.thinkingEnabled,
+                            thinkingEffort = currentOnlineConfig.thinkingEffort,
+                            providerDialect = currentOnlineConfig.providerDialect,
                         )
                     } else {
                         currentOnlineConfig
@@ -1874,6 +1879,11 @@ private fun LiteRtImeSettingsScreen(
                         modelName = draftCustomOnlineModelName.ifBlank {
                             loggedOnlineConfig.modelName
                         },
+                        maxTokens = loggedOnlineConfig.maxTokens,
+                        temperature = loggedOnlineConfig.temperature,
+                        thinkingEnabled = loggedOnlineConfig.thinkingEnabled,
+                        thinkingEffort = loggedOnlineConfig.thinkingEffort,
+                        providerDialect = loggedOnlineConfig.providerDialect,
                     )
                     val replayBackendSelection = draftReplayBackendType
                         .ifBlank { selectedLogEntry.backendType }

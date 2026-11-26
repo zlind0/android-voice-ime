@@ -2,6 +2,8 @@ package com.litertime.android.settings
 
 import android.content.Context
 import com.litertime.android.pipeline.VoiceMode
+import com.litertime.android.pipeline.online.OnlineProviderDialect
+import com.litertime.android.pipeline.online.ThinkingEffort
 import com.litertime.android.storage.DownloadMirror
 import com.litertime.android.ui.PastelPalette
 import java.io.File
@@ -42,20 +44,43 @@ enum class OnlineLlmModelProfile(
     }
 }
 
-/** One profile's endpoint override. Blank fields fall back to the unified configuration. */
+/** One profile's endpoint override. Blank / null fields fall back to the unified configuration. */
 data class OnlineLlmOverride(
     val baseUrl: String = "",
     val apiKey: String = "",
     val modelName: String = "",
+    /** null inherits the unified generation settings. */
+    val maxTokens: Int? = null,
+    val temperature: Double? = null,
+    val thinkingEnabled: Boolean? = null,
+    val thinkingEffort: ThinkingEffort? = null,
+    /**
+     * Per-profile provider adaptation. It is deliberately not inherited from the unified config:
+     * each profile may point at a different endpoint, so "自动" re-detects from that profile's own
+     * host and model.
+     */
+    val providerDialect: OnlineProviderDialect = OnlineProviderDialect.AUTO,
 ) {
     fun resolve(unified: ResolvedOnlineLlmConfig): ResolvedOnlineLlmConfig = ResolvedOnlineLlmConfig(
         baseUrl = baseUrl.trim().ifBlank { unified.baseUrl },
         apiKey = apiKey.trim().ifBlank { unified.apiKey },
         modelName = modelName.trim().ifBlank { unified.modelName },
+        maxTokens = maxTokens ?: unified.maxTokens,
+        temperature = temperature ?: unified.temperature,
+        thinkingEnabled = thinkingEnabled ?: unified.thinkingEnabled,
+        thinkingEffort = thinkingEffort ?: unified.thinkingEffort,
+        providerDialect = providerDialect,
     )
 
     val isEmpty: Boolean
-        get() = baseUrl.isBlank() && apiKey.isBlank() && modelName.isBlank()
+        get() = baseUrl.isBlank() &&
+            apiKey.isBlank() &&
+            modelName.isBlank() &&
+            maxTokens == null &&
+            temperature == null &&
+            thinkingEnabled == null &&
+            thinkingEffort == null &&
+            providerDialect == OnlineProviderDialect.AUTO
 }
 
 /** Fully resolved OpenAI-compatible endpoint used by both the settings UI and the backend. */
@@ -63,9 +88,25 @@ data class ResolvedOnlineLlmConfig(
     val baseUrl: String,
     val apiKey: String,
     val modelName: String,
+    /** Upper bound for the generated answer, sent as `max_tokens` / `max_completion_tokens`. */
+    val maxTokens: Int = DEFAULT_MAX_TOKENS,
+    val temperature: Double = DEFAULT_TEMPERATURE,
+    val thinkingEnabled: Boolean = false,
+    val thinkingEffort: ThinkingEffort = ThinkingEffort.MEDIUM,
+    val providerDialect: OnlineProviderDialect = OnlineProviderDialect.AUTO,
 ) {
     val isConfigured: Boolean
         get() = baseUrl.isNotBlank() && modelName.isNotBlank()
+
+    companion object {
+        const val MIN_MAX_TOKENS = 64
+        const val MAX_MAX_TOKENS = 32768
+        const val DEFAULT_MAX_TOKENS = 8000
+
+        const val MIN_TEMPERATURE = 0.0
+        const val MAX_TEMPERATURE = 2.0
+        const val DEFAULT_TEMPERATURE = 0.35
+    }
 }
 
 enum class HandwritingInkColor(val displayName: String, val argb: Int) {
@@ -96,6 +137,13 @@ data class ImeSettings(
     val onlineBaseUrl: String = "https://api.openai.com/v1",
     val onlineApiKey: String = "",
     val onlineModelName: String = "gpt-4o-mini",
+    /** Unified generation parameters shared by every AI-mic mode unless overridden. */
+    val onlineMaxTokens: Int = ResolvedOnlineLlmConfig.DEFAULT_MAX_TOKENS,
+    val onlineTemperature: Double = ResolvedOnlineLlmConfig.DEFAULT_TEMPERATURE,
+    val onlineThinkingEnabled: Boolean = false,
+    val onlineThinkingEffort: ThinkingEffort = ThinkingEffort.MEDIUM,
+    /** Provider adaptation for the thinking wire format; AUTO detects it from host + model. */
+    val onlineProviderDialect: OnlineProviderDialect = OnlineProviderDialect.AUTO,
     /** When enabled each AI-mic mode may override endpoint/key/model independently. */
     val onlinePerModeModels: Boolean = false,
     /** Endpoint overrides keyed by [OnlineLlmModelProfile]. Empty values use the unified config. */
@@ -179,6 +227,11 @@ data class ImeSettings(
             baseUrl = onlineBaseUrl.trim(),
             apiKey = onlineApiKey.trim(),
             modelName = onlineModelName.trim(),
+            maxTokens = onlineMaxTokens,
+            temperature = onlineTemperature,
+            thinkingEnabled = onlineThinkingEnabled,
+            thinkingEffort = onlineThinkingEffort,
+            providerDialect = onlineProviderDialect,
         )
 
     fun onlineConfigFor(mode: VoiceMode): ResolvedOnlineLlmConfig {
@@ -267,12 +320,51 @@ class ImeSettingsStore(private val appFilesDir: File) {
             onlineBaseUrl = props.getProperty("onlineBaseUrl", "https://api.openai.com/v1"),
             onlineApiKey = props.getProperty("onlineApiKey", ""),
             onlineModelName = props.getProperty("onlineModelName", "gpt-4o-mini"),
+            onlineMaxTokens = (props.getProperty("onlineMaxTokens")?.toIntOrNull()
+                ?: ResolvedOnlineLlmConfig.DEFAULT_MAX_TOKENS)
+                .coerceIn(
+                    ResolvedOnlineLlmConfig.MIN_MAX_TOKENS,
+                    ResolvedOnlineLlmConfig.MAX_MAX_TOKENS,
+                ),
+            onlineTemperature = (props.getProperty("onlineTemperature")?.toDoubleOrNull()
+                ?: ResolvedOnlineLlmConfig.DEFAULT_TEMPERATURE)
+                .coerceIn(
+                    ResolvedOnlineLlmConfig.MIN_TEMPERATURE,
+                    ResolvedOnlineLlmConfig.MAX_TEMPERATURE,
+                ),
+            onlineThinkingEnabled = props.getProperty("onlineThinkingEnabled", "false").toBoolean(),
+            onlineThinkingEffort = ThinkingEffort.fromStorageIdOrDefault(
+                props.getProperty("onlineThinkingEffort"),
+            ),
+            onlineProviderDialect = OnlineProviderDialect.fromStorageId(
+                props.getProperty("onlineProviderDialect"),
+            ),
             onlinePerModeModels = props.getProperty("onlinePerModeModels", "false").toBoolean(),
             onlineOverrides = OnlineLlmModelProfile.entries.associateWith { profile ->
                 OnlineLlmOverride(
                     baseUrl = props.getProperty("online${profile.storageKey}BaseUrl", ""),
                     apiKey = props.getProperty("online${profile.storageKey}ApiKey", ""),
                     modelName = props.getProperty("online${profile.storageKey}ModelName", ""),
+                    maxTokens = props.getProperty("online${profile.storageKey}MaxTokens")
+                        ?.toIntOrNull()
+                        ?.coerceIn(
+                            ResolvedOnlineLlmConfig.MIN_MAX_TOKENS,
+                            ResolvedOnlineLlmConfig.MAX_MAX_TOKENS,
+                        ),
+                    temperature = props.getProperty("online${profile.storageKey}Temperature")
+                        ?.toDoubleOrNull()
+                        ?.coerceIn(
+                            ResolvedOnlineLlmConfig.MIN_TEMPERATURE,
+                            ResolvedOnlineLlmConfig.MAX_TEMPERATURE,
+                        ),
+                    thinkingEnabled = props.getProperty("online${profile.storageKey}ThinkingEnabled")
+                        ?.toBooleanStrictOrNull(),
+                    thinkingEffort = ThinkingEffort.fromStorageId(
+                        props.getProperty("online${profile.storageKey}ThinkingEffort"),
+                    ),
+                    providerDialect = OnlineProviderDialect.fromStorageId(
+                        props.getProperty("online${profile.storageKey}ProviderDialect"),
+                    ),
                 )
             }.filterValues { !it.isEmpty },
             debugRequestLoggingEnabled = props.getProperty("debugRequestLoggingEnabled", "false").toBoolean(),
@@ -337,12 +429,53 @@ class ImeSettingsStore(private val appFilesDir: File) {
             setProperty("onlineBaseUrl", settings.onlineBaseUrl)
             setProperty("onlineApiKey", settings.onlineApiKey)
             setProperty("onlineModelName", settings.onlineModelName)
+            setProperty(
+                "onlineMaxTokens",
+                settings.onlineMaxTokens
+                    .coerceIn(
+                        ResolvedOnlineLlmConfig.MIN_MAX_TOKENS,
+                        ResolvedOnlineLlmConfig.MAX_MAX_TOKENS,
+                    )
+                    .toString(),
+            )
+            setProperty(
+                "onlineTemperature",
+                settings.onlineTemperature
+                    .coerceIn(
+                        ResolvedOnlineLlmConfig.MIN_TEMPERATURE,
+                        ResolvedOnlineLlmConfig.MAX_TEMPERATURE,
+                    )
+                    .toString(),
+            )
+            setProperty("onlineThinkingEnabled", settings.onlineThinkingEnabled.toString())
+            setProperty("onlineThinkingEffort", settings.onlineThinkingEffort.storageId)
+            setProperty("onlineProviderDialect", settings.onlineProviderDialect.storageId)
             setProperty("onlinePerModeModels", settings.onlinePerModeModels.toString())
             OnlineLlmModelProfile.entries.forEach { profile ->
                 val override = settings.onlineOverrides[profile] ?: OnlineLlmOverride()
                 setProperty("online${profile.storageKey}BaseUrl", override.baseUrl)
                 setProperty("online${profile.storageKey}ApiKey", override.apiKey)
                 setProperty("online${profile.storageKey}ModelName", override.modelName)
+                setProperty(
+                    "online${profile.storageKey}MaxTokens",
+                    override.maxTokens?.toString().orEmpty(),
+                )
+                setProperty(
+                    "online${profile.storageKey}Temperature",
+                    override.temperature?.toString().orEmpty(),
+                )
+                setProperty(
+                    "online${profile.storageKey}ThinkingEnabled",
+                    override.thinkingEnabled?.toString().orEmpty(),
+                )
+                setProperty(
+                    "online${profile.storageKey}ThinkingEffort",
+                    override.thinkingEffort?.storageId.orEmpty(),
+                )
+                setProperty(
+                    "online${profile.storageKey}ProviderDialect",
+                    override.providerDialect.storageId,
+                )
             }
             setProperty("debugRequestLoggingEnabled", settings.debugRequestLoggingEnabled.toString())
             setProperty("stripTrailingPeriod", settings.stripTrailingPeriod.toString())
