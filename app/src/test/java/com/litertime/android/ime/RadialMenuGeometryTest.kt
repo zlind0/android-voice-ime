@@ -216,4 +216,136 @@ class RadialMenuGeometryTest {
             ),
         )
     }
+
+    @Test
+    fun canopyLayoutStaysWithinScreenAndProtectsInitialButtonTouch() {
+        val density = 3f
+        val dp = { v: Float -> v * density }
+
+        for (widthDp in listOf(320f, 380f)) {
+            val viewWidth = dp(widthDp)
+            for (panelProgress in listOf(0f, 1f)) {
+                val (whisperLeft, whisperRight, gemmaLeft, gemmaRight) = if (panelProgress == 0f) {
+                    val micsLeft = dp(14f + 56f + 8f)
+                    val micsRight = viewWidth - dp(14f + 48f + 8f)
+                    val eachW = (micsRight - micsLeft - dp(8f)) / 2f
+                    listOf(micsLeft, micsLeft + eachW, micsLeft + eachW + dp(8f), micsRight)
+                } else {
+                    val pairW = dp(44f * 2f + 6f)
+                    val micsLeft = dp(14f) + pairW + dp(8f)
+                    val micsRight = viewWidth - dp(14f) - pairW - dp(8f)
+                    val eachW = (micsRight - micsLeft - dp(8f)) / 2f
+                    listOf(micsLeft, micsLeft + eachW, micsLeft + eachW + dp(8f), micsRight)
+                }
+                val btnTop = dp(200f)
+
+                for ((source, bounds) in listOf(
+                    MicSource.WHISPER to (whisperLeft to whisperRight),
+                    MicSource.GEMMA to (gemmaLeft to gemmaRight),
+                )) {
+                    val (btnLeft, btnRight) = bounds
+                    val layout = RadialMenuGeometry.resolveCanopyLayout(
+                        source = source,
+                        btnLeft = btnLeft,
+                        btnTop = btnTop,
+                        btnRight = btnRight,
+                        viewWidth = viewWidth,
+                        panelExpandProgress = panelProgress,
+                        density = density,
+                    )
+                    val margin = dp(10f)
+                    assertTrue(
+                        "Left edge exceeded for $source width=$widthDp p=$panelProgress",
+                        layout.domeCx - layout.canopyRadius >= margin - 0.5f,
+                    )
+                    assertTrue(
+                        "Right edge exceeded for $source width=$widthDp p=$panelProgress",
+                        layout.domeCx + layout.canopyRadius <= viewWidth - margin + 0.5f,
+                    )
+
+                    val btnCx = (btnLeft + btnRight) * 0.5f
+                    for (touchX in listOf(btnLeft, btnCx, btnRight)) {
+                        val eval = RadialMenuGeometry.evaluate(
+                            anchorX = layout.domeCx,
+                            anchorY = layout.domeCy,
+                            pointerX = touchX,
+                            pointerY = btnTop,
+                            radius = layout.canopyRadius,
+                            source = source,
+                            bottomGracePx = dp(12f),
+                        )
+                        assertEquals(
+                            "Initial touch at x=$touchX on $source width=$widthDp p=$panelProgress",
+                            RadialMenuGeometry.centerActionFor(source),
+                            eval.action,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun canopyPetalMidpointsActivateExpectedActions() {
+        val density = 3f
+        val dp = { v: Float -> v * density }
+        val viewWidth = dp(380f)
+        val btnTop = dp(220f)
+
+        val gemmaLayout = RadialMenuGeometry.resolveCanopyLayout(
+            source = MicSource.GEMMA,
+            btnLeft = dp(198f),
+            btnTop = btnTop,
+            btnRight = dp(310f),
+            viewWidth = viewWidth,
+            panelExpandProgress = 0f,
+            density = density,
+        )
+        val petalR = gemmaLayout.canopyRadius * (RadialMenuGeometry.CENTER_ZONE_RATIO + 1f) * 0.5f
+        for ((index, expectedAction) in RadialMenuGeometry.GEMMA_OUTER_SECTORS.withIndex()) {
+            val (px, py) = RadialMenuGeometry.pointOnArc(
+                anchorX = gemmaLayout.domeCx,
+                anchorY = gemmaLayout.domeCy,
+                radius = petalR,
+                angleDegrees = RadialMenuGeometry.sectorMidAngle(index),
+            )
+            val eval = RadialMenuGeometry.evaluate(
+                anchorX = gemmaLayout.domeCx,
+                anchorY = gemmaLayout.domeCy,
+                pointerX = px,
+                pointerY = py,
+                radius = gemmaLayout.canopyRadius,
+                source = MicSource.GEMMA,
+                bottomGracePx = dp(12f),
+            )
+            assertEquals("Petal $index mismatch", expectedAction, eval.action)
+        }
+
+        val whisperLayout = RadialMenuGeometry.resolveCanopyLayout(
+            source = MicSource.WHISPER,
+            btnLeft = dp(78f),
+            btnTop = btnTop,
+            btnRight = dp(190f),
+            viewWidth = viewWidth,
+            panelExpandProgress = 0f,
+            density = density,
+        )
+        val whisperPetalR = whisperLayout.canopyRadius * (RadialMenuGeometry.CENTER_ZONE_RATIO + 1f) * 0.5f
+        val (wx, wy) = RadialMenuGeometry.pointOnArc(
+            anchorX = whisperLayout.domeCx,
+            anchorY = whisperLayout.domeCy,
+            radius = whisperPetalR,
+            angleDegrees = 90f,
+        )
+        val whisperEval = RadialMenuGeometry.evaluate(
+            anchorX = whisperLayout.domeCx,
+            anchorY = whisperLayout.domeCy,
+            pointerX = wx,
+            pointerY = wy,
+            radius = whisperLayout.canopyRadius,
+            source = MicSource.WHISPER,
+            bottomGracePx = dp(12f),
+        )
+        assertEquals(RadialAction.CANCEL, whisperEval.action)
+    }
 }

@@ -9,8 +9,10 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.Debug
 import android.util.AttributeSet
@@ -18,13 +20,20 @@ import android.util.TypedValue
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
-import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.view.animation.PathInterpolator
 import com.litertime.android.ui.PastelPalette
+import com.litertime.android.ui.blendArgb
+import com.litertime.android.ui.contrastingInk
+import com.litertime.android.ui.relativeLuminance
+import com.litertime.android.ui.withAlpha
 import java.io.File
 import java.util.Locale
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 enum class ExpandedPanelMode {
     NONE,
@@ -103,7 +112,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     }
 
     // Geometry constants
-    val radialTopSpacePx = dp(140f).toInt()
+    val radialTopSpacePx = dp(184f).toInt()
     private val collapsedTopPaddingPx = dp(12f)
     private val expandedTopPaddingPx = dp(8f)
     private val collapsedMicHeightPx = dp(104f)
@@ -111,8 +120,6 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     private val collapsedBelowMicPx = dp(48f)
     private val expandedBelowMicPx = dp(24f)
 
-    private val radialRadiusPx = dp(132f)
-    private val knobRadiusPx = dp(28f)
     private val barPaddingHPx = dp(14f)
     private val barInnerGapPx = dp(8f)
     private val memoryRefreshIntervalMs = 2_000L
@@ -140,16 +147,23 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     private var statusMessage: String = ""
     private var showCancelBanner: Boolean = false
 
-    // Radial gesture state
+    // Streamlined morphing gesture state
     private var activeSource: MicSource? = null
+    private var activeCanopyLayout: StreamlinedCanopyLayout? = null
     private var anchorX: Float = 0f
     private var anchorY: Float = 0f
+    private var activeCanopyRadius: Float = dp(132f)
     private var pointerX: Float = 0f
     private var pointerY: Float = 0f
     private var currentAction: RadialAction = RadialAction.NONE
-    private var currentDistanceRatio: Float = 0f
     private var expandProgress: Float = 0f
     private var voiceAmplitude: Float = 0f
+
+    private var closingSource: MicSource? = null
+    private var closingCanopyLayout: StreamlinedCanopyLayout? = null
+    private var closingAction: RadialAction = RadialAction.NONE
+    private var cancelBlend: Float = 0f
+    private var cancelBlendAnimator: ValueAnimator? = null
 
     private var trayActions: List<DragAppAction> = emptyList()
     private var trayChips: List<Pair<DragAppAction, RectF>> = emptyList()
@@ -169,8 +183,10 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     private val cancelBannerRect = RectF()
     private val cancelBannerButtonRect = RectF()
     private val scratchRect = RectF()
-    private val scratchRect2 = RectF()
+    private val petalScratchRect = RectF()
     private val scratchPath = Path()
+    private val megaButtonPath = Path()
+    private val petalPath = Path()
 
     private enum class IdleTouchTarget {
         NONE,
@@ -329,43 +345,36 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         color = PastelPalette.INK_ON_PINK
         style = Paint.Style.FILL
     }
-    private val roseIconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = PastelPalette.INK_ON_ROSE
-        style = Paint.Style.STROKE
-        strokeWidth = dp(1.8f)
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-    }
-    private val roseIconFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = PastelPalette.INK_ON_ROSE
+    private val megaBodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
-    private val discBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = PastelPalette.DISC_BG
+    private val touchGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
-    private val sectorHighlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = PastelPalette.SECTOR_HIGHLIGHT
+    private val petalFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
-    private val sectorCancelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = PastelPalette.SECTOR_CANCEL
-        style = Paint.Style.FILL
+    private val petalTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = sp(12.5f)
+        typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
     }
-    private val centerHighlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = PastelPalette.CENTER_HIGHLIGHT
-        style = Paint.Style.FILL
-    }
-    private val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = PastelPalette.SECTOR_DIVIDER
-        style = Paint.Style.STROKE
-        strokeWidth = dp(1f)
-    }
-    private val sectorTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = PastelPalette.TEXT_PRIMARY
+    private val centerCaptionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = sp(11.5f)
         typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
         textAlign = Paint.Align.CENTER
+    }
+    private val voiceRipplePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dp(2.2f)
+    }
+    private val megaGlyphStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val megaGlyphFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
     }
     private val cancelTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = PastelPalette.INK_ON_ROSE
@@ -379,16 +388,8 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
         textAlign = Paint.Align.CENTER
     }
-    private val knobPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = PastelPalette.SKY_BLUE
-        style = Paint.Style.FILL
-    }
-    private val knobCancelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val stopBannerBtnPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = PastelPalette.ROSE_DANGER
-        style = Paint.Style.FILL
-    }
-    private val knobGemmaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = PastelPalette.SKY_BLUE
         style = Paint.Style.FILL
     }
     private val chipBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -403,17 +404,20 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         color = PastelPalette.ROSE_DANGER
         style = Paint.Style.FILL
     }
-    private val amplitudeRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = PastelPalette.AMPLITUDE_RING
-        style = Paint.Style.STROKE
-        strokeWidth = dp(3f)
-    }
     private val pillBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = PastelPalette.PILL_BG
         style = Paint.Style.FILL
     }
     private val pillTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = PastelPalette.TEXT_PRIMARY
+        textSize = sp(12f)
+        typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+    }
+    private val hintPillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val hintPillTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = sp(12f)
         typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
         textAlign = Paint.Align.CENTER
@@ -465,23 +469,12 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         enterIconPaint.color = PastelPalette.INK_ON_PINK
         pinkGlyphStrokePaint.color = PastelPalette.INK_ON_PINK
         pinkGlyphFillPaint.color = PastelPalette.INK_ON_PINK
-        roseIconPaint.color = PastelPalette.INK_ON_ROSE
-        roseIconFillPaint.color = PastelPalette.INK_ON_ROSE
-        discBgPaint.color = PastelPalette.DISC_BG
-        sectorHighlightPaint.color = PastelPalette.SECTOR_HIGHLIGHT
-        sectorCancelPaint.color = PastelPalette.SECTOR_CANCEL
-        centerHighlightPaint.color = PastelPalette.CENTER_HIGHLIGHT
-        dividerPaint.color = PastelPalette.SECTOR_DIVIDER
-        sectorTextPaint.color = PastelPalette.TEXT_PRIMARY
         cancelTextPaint.color = PastelPalette.INK_ON_ROSE
         chipTextPaint.color = PastelPalette.TEXT_PRIMARY
-        knobPaint.color = PastelPalette.SKY_BLUE
-        knobCancelPaint.color = PastelPalette.ROSE_DANGER
-        knobGemmaPaint.color = PastelPalette.SKY_BLUE
+        stopBannerBtnPaint.color = PastelPalette.ROSE_DANGER
         chipBgPaint.color = PastelPalette.SURFACE_CHIP_IDLE
         chipSelectedPaint.color = PastelPalette.SKY_BLUE
         chipDangerPaint.color = PastelPalette.ROSE_DANGER
-        amplitudeRingPaint.color = PastelPalette.AMPLITUDE_RING
         pillBgPaint.color = PastelPalette.PILL_BG
         pillTextPaint.color = PastelPalette.TEXT_PRIMARY
         memoryTextPaint.color = PastelPalette.TEXT_MUTED
@@ -808,7 +801,13 @@ class VoiceImeOverlayView @JvmOverloads constructor(
     fun drawRadialOverlay(canvas: Canvas) {
         if (isRadialExpanded && activeSource != null) {
             drawTrayTargets(canvas)
-            drawRadialDisc(canvas, activeSource!!)
+            activeCanopyLayout?.let { layout ->
+                drawStreamlinedVoiceButton(canvas, activeSource!!, layout, isClosing = false)
+            }
+        } else if (closingSource != null && expandProgress > 0.005f) {
+            closingCanopyLayout?.let { layout ->
+                drawStreamlinedVoiceButton(canvas, closingSource!!, layout, isClosing = true)
+            }
         }
     }
 
@@ -823,7 +822,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         pillTextPaint.textAlign = prevAlign
 
         if (showCancelBanner) {
-            canvas.drawRoundRect(cancelBannerButtonRect, dp(10f), dp(10f), knobCancelPaint)
+            canvas.drawRoundRect(cancelBannerButtonRect, dp(10f), dp(10f), stopBannerBtnPaint)
             val cy = cancelBannerButtonRect.centerY() - (cancelTextPaint.descent() + cancelTextPaint.ascent()) / 2f
             canvas.drawText("停止", cancelBannerButtonRect.centerX(), cy, cancelTextPaint)
         }
@@ -927,35 +926,43 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         drawEnterIcon(canvas, enterBtnRect.centerX(), enterBtnRect.centerY())
 
         // Mic buttons: shrink height 104dp -> 52dp and scale mic icon + "AI" text proportionally.
+        // Skip drawing the idle button while it is being morphed on the top overlay layer.
         val micGlyphHeight = computeMicGlyphHeight(gemmaBtnRect, p)
         val micRadius = lerp(dp(26f), dp(18f), p)
 
-        val whisperPressed = isRadialExpanded && activeSource == MicSource.WHISPER
-        val whisperBg = when {
-            whisperLoaded && whisperPressed -> micLoadedPressedPaint
-            whisperLoaded -> micLoadedPaint
-            whisperPressed -> micInactivePressedPaint
-            else -> micInactivePaint
+        val whisperInOverlay = (isRadialExpanded && activeSource == MicSource.WHISPER) ||
+            (closingSource == MicSource.WHISPER && expandProgress > 0.005f)
+        if (!whisperInOverlay) {
+            val whisperBg = if (whisperLoaded) micLoadedPaint else micInactivePaint
+            canvas.drawRoundRect(whisperBtnRect, micRadius, micRadius, whisperBg)
+            drawScaledMicGlyph(
+                canvas = canvas,
+                cx = whisperBtnRect.centerX(),
+                centerY = whisperBtnRect.centerY(),
+                heightPx = micGlyphHeight,
+                strokePaint = if (whisperLoaded) darkGlyphStrokePaint else lightGlyphStrokePaint,
+                fillPaint = if (whisperLoaded) darkGlyphFillPaint else lightGlyphFillPaint,
+            )
         }
-        canvas.drawRoundRect(whisperBtnRect, micRadius, micRadius, whisperBg)
-        drawScaledMicGlyph(
-            canvas = canvas,
-            cx = whisperBtnRect.centerX(),
-            centerY = whisperBtnRect.centerY(),
-            heightPx = micGlyphHeight,
-            strokePaint = if (whisperLoaded) darkGlyphStrokePaint else lightGlyphStrokePaint,
-            fillPaint = if (whisperLoaded) darkGlyphFillPaint else lightGlyphFillPaint,
-        )
 
-        val gemmaPressed = isRadialExpanded && activeSource == MicSource.GEMMA
-        val gemmaBg = when {
-            gemmaLoaded && gemmaPressed -> enterBtnPressedPaint
-            gemmaLoaded -> enterBtnPaint
-            gemmaPressed -> micInactivePressedPaint
-            else -> micInactivePaint
+        val gemmaInOverlay = (isRadialExpanded && activeSource == MicSource.GEMMA) ||
+            (closingSource == MicSource.GEMMA && expandProgress > 0.005f)
+        if (!gemmaInOverlay) {
+            val gemmaBg = if (gemmaLoaded) enterBtnPaint else micInactivePaint
+            canvas.drawRoundRect(gemmaBtnRect, micRadius, micRadius, gemmaBg)
+            drawAiMicContent(
+                canvas = canvas,
+                cx = gemmaBtnRect.centerX(),
+                centerY = gemmaBtnRect.centerY(),
+                topBound = gemmaBtnRect.top,
+                glyphHeight = micGlyphHeight,
+                expandP = p,
+                strokePaint = if (gemmaLoaded) pinkGlyphStrokePaint else lightGlyphStrokePaint,
+                fillPaint = if (gemmaLoaded) pinkGlyphFillPaint else lightGlyphFillPaint,
+                inkColor = if (gemmaLoaded) PastelPalette.INK_ON_PINK else PastelPalette.TEXT_ON_DARK_SKY,
+                showCloud = onlineCloudVisible && !gemmaLoaded,
+            )
         }
-        canvas.drawRoundRect(gemmaBtnRect, micRadius, micRadius, gemmaBg)
-        drawAiMicContent(canvas, gemmaBtnRect, micGlyphHeight, p, isLoaded = gemmaLoaded)
     }
 
     private fun drawEnglishButtonContent(canvas: Canvas, rect: RectF, isActive: Boolean) {
@@ -1046,10 +1053,15 @@ class VoiceImeOverlayView @JvmOverloads constructor(
 
     private fun drawAiMicContent(
         canvas: Canvas,
-        rect: RectF,
+        cx: Float,
+        centerY: Float,
+        topBound: Float,
         glyphHeight: Float,
         expandP: Float,
-        isLoaded: Boolean,
+        strokePaint: Paint,
+        fillPaint: Paint,
+        inkColor: Int,
+        showCloud: Boolean,
     ) {
         if (glyphHeight <= 0f) return
         val gap = lerp(dp(10f), dp(5f), expandP)
@@ -1066,40 +1078,45 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         val glyphWidth = glyphHeight * glyphWidthRatio
 
         val totalWidth = glyphWidth + gap + aiWidth
-        val startX = rect.centerX() - totalWidth / 2f
-        val centerY = rect.centerY()
+        val startX = cx - totalWidth / 2f
 
         drawScaledMicGlyph(
             canvas = canvas,
             cx = startX + glyphWidth / 2f,
             centerY = centerY,
             heightPx = glyphHeight,
-            strokePaint = if (isLoaded) pinkGlyphStrokePaint else lightGlyphStrokePaint,
-            fillPaint = if (isLoaded) pinkGlyphFillPaint else lightGlyphFillPaint,
+            strokePaint = strokePaint,
+            fillPaint = fillPaint,
         )
 
-        aiTextPaint.color = if (isLoaded) PastelPalette.INK_ON_PINK else PastelPalette.TEXT_ON_DARK_SKY
+        aiTextPaint.color = inkColor
         aiTextPaint.textSize = aiTextSize
         val textBounds = Rect()
         aiTextPaint.getTextBounds("AI", 0, 2, textBounds)
         val baseline = centerY + glyphHeight / 2f - textBounds.bottom
         canvas.drawText("AI", startX + glyphWidth + gap, baseline, aiTextPaint)
 
-        if (onlineCloudVisible && !isLoaded) {
+        if (showCloud) {
             val aiCenterX = startX + glyphWidth + gap + aiWidth / 2f
             // The topmost cloud circle sits at cy - 1.03r. Align that edge with the
             // microphone glyph's top edge so the cloud leaves breathing room below.
             val radius = (glyphHeight * 0.2f).coerceIn(dp(2.8f), dp(4.5f))
             val micTop = centerY - glyphHeight / 2f
             val cloudCenterY = (micTop + radius * 1.03f)
-                .coerceAtLeast(rect.top + radius * 1.03f)
-            drawOnlineCloud(canvas, aiCenterX, cloudCenterY, radius)
+                .coerceAtLeast(topBound + radius * 1.03f)
+            drawOnlineCloud(canvas, aiCenterX, cloudCenterY, radius, inkColor)
         }
     }
 
-    private fun drawOnlineCloud(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
+    private fun drawOnlineCloud(
+        canvas: Canvas,
+        cx: Float,
+        cy: Float,
+        radius: Float,
+        inkColor: Int,
+    ) {
         if (radius <= 0f) return
-        cloudPaint.color = PastelPalette.TEXT_ON_DARK_SKY
+        cloudPaint.color = inkColor
         canvas.drawCircle(cx - radius * 0.75f, cy + radius * 0.12f, radius * 0.55f, cloudPaint)
         canvas.drawCircle(cx, cy - radius * 0.25f, radius * 0.78f, cloudPaint)
         canvas.drawCircle(cx + radius * 0.8f, cy + radius * 0.12f, radius * 0.5f, cloudPaint)
@@ -1268,99 +1285,227 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         }
     }
 
-    private fun knobFillPaint(source: MicSource): Paint = when {
-        isTrayTargeted -> when (selectedTrayAction) {
-            null -> if (source == MicSource.GEMMA) knobGemmaPaint else knobPaint
-            DragAppAction.UNLOAD_WHISPER, DragAppAction.UNLOAD_GEMMA -> knobCancelPaint
-            else -> knobPaint
-        }
-        currentAction == RadialAction.CANCEL -> knobCancelPaint
-        source == MicSource.GEMMA -> knobGemmaPaint
-        else -> knobPaint
+    private fun computeCanopyLayout(source: MicSource): StreamlinedCanopyLayout {
+        val btnRect = if (source == MicSource.WHISPER) whisperBtnRect else gemmaBtnRect
+        return RadialMenuGeometry.resolveCanopyLayout(
+            source = source,
+            btnLeft = btnRect.left,
+            btnTop = btnRect.top,
+            btnRight = btnRect.right,
+            viewWidth = width.toFloat(),
+            panelExpandProgress = panelExpandProgress,
+            density = density,
+        )
     }
 
-    private fun drawRadialDisc(canvas: Canvas, source: MicSource) {
-        val currentR = radialRadiusPx * expandProgress
-        if (currentR < 4f) return
+    private fun drawStreamlinedVoiceButton(
+        canvas: Canvas,
+        source: MicSource,
+        layout: StreamlinedCanopyLayout,
+        isClosing: Boolean,
+    ) {
+        val p = panelExpandProgress.coerceIn(0f, 1f)
+        val btnRect = if (source == MicSource.WHISPER) whisperBtnRect else gemmaBtnRect
+        val micRadius = lerp(dp(26f), dp(18f), p)
+        val t = expandProgress.coerceAtLeast(0f)
+        val clampedT = t.coerceIn(0f, 1f)
+        val activeAction = if (isClosing) closingAction else currentAction
+        val isLoaded = if (source == MicSource.WHISPER) whisperLoaded else gemmaLoaded
 
-        scratchRect.set(anchorX - currentR, anchorY - currentR, anchorX + currentR, anchorY + currentR)
-        val basePath = Path().apply {
-            addArc(scratchRect, 180f, 180f)
-            close()
+        val baseColor = when {
+            source == MicSource.WHISPER && whisperLoaded -> PastelPalette.SKY_BLUE
+            source == MicSource.GEMMA && gemmaLoaded -> PastelPalette.PINK_LIGHT
+            else -> blendArgb(PastelPalette.SURFACE_MIC_INACTIVE, PastelPalette.SURFACE_POPUP, clampedT)
         }
-        canvas.drawPath(basePath, discBgPaint)
+        var bodyColor = blendArgb(
+            baseColor,
+            PastelPalette.SURFACE_BACKSPACE_PRESSED,
+            (cancelBlend * 0.92f).coerceIn(0f, 1f),
+        )
+        if (!isClosing && isTrayTargeted) {
+            bodyColor = blendArgb(bodyColor, PastelPalette.BG_CANVAS, 0.22f)
+        }
+        val bodyInk = contrastingInk(bodyColor)
+        val isLightBody = relativeLuminance(bodyColor) > 0.48f
 
-        val innerR = currentR * RadialMenuGeometry.CENTER_ZONE_RATIO
-        if (isTrayTargeted) {
-            // Suppressed while targeted in lower tray
-        } else if (currentAction == RadialAction.CANCEL) {
-            val sweepAngle = if (source == MicSource.WHISPER) {
-                180f
-            } else {
-                RadialMenuGeometry.SECTOR_SWEEP_DEG
-            }
-            drawRingSector(canvas, anchorX, anchorY, innerR, currentR, 180f, sweepAngle, sectorCancelPaint)
-        } else if (source == MicSource.GEMMA) {
-            if (currentDistanceRatio < RadialMenuGeometry.CENTER_ZONE_RATIO) {
-                scratchRect.set(anchorX - innerR, anchorY - innerR, anchorX + innerR, anchorY + innerR)
-                val centerPath = Path().apply {
-                    addArc(scratchRect, 0f, 360f)
-                    close()
+        buildStreamlinedButtonPath(btnRect, micRadius, layout, t, megaButtonPath)
+
+        megaBodyPaint.color = bodyColor
+        val shadowAlpha = (0x44 * clampedT).roundToInt().coerceIn(0, 0x44)
+        if (shadowAlpha > 0) {
+            megaBodyPaint.setShadowLayer(
+                dp(12f) * clampedT,
+                0f,
+                dp(4f) * clampedT,
+                withAlpha(0x000000, shadowAlpha),
+            )
+        } else {
+            megaBodyPaint.clearShadowLayer()
+        }
+        canvas.drawPath(megaButtonPath, megaBodyPaint)
+
+        val curCx = lerp(btnRect.centerX(), layout.domeCx, clampedT)
+        val curCy = lerp(btnRect.top + micRadius, layout.domeCy, t)
+        val curR = lerp(micRadius, layout.canopyRadius, t).coerceAtLeast(micRadius)
+        val baseOuterR = (curR - dp(8f)).coerceAtLeast(dp(16f))
+        val baseInnerR = (curR * RadialMenuGeometry.CENTER_ZONE_RATIO).coerceAtMost(baseOuterR - dp(12f))
+        val petalAlpha = ((t - 0.25f) / 0.65f).coerceIn(0f, 1f)
+        val trayDim = if (!isClosing && isTrayTargeted) 0.45f else 1f
+
+        canvas.save()
+        canvas.clipPath(megaButtonPath)
+
+        // Clipped soft radial touch spotlight following the finger without covering labels.
+        if (!isClosing && !isTrayTargeted && t > 0.2f) {
+            val clampedPointerX = pointerX.coerceIn(0f, width.toFloat().coerceAtLeast(1f))
+            val clampedPointerY = pointerY.coerceIn(0f, height.toFloat().coerceAtLeast(1f))
+            val glowR = dp(48f)
+            touchGlowPaint.shader = RadialGradient(
+                clampedPointerX,
+                clampedPointerY,
+                glowR,
+                intArrayOf(withAlpha(bodyInk, (0x1A * clampedT).roundToInt()), 0),
+                null,
+                Shader.TileMode.CLAMP,
+            )
+            canvas.drawCircle(clampedPointerX, clampedPointerY, glowR, touchGlowPaint)
+        }
+
+        // Upper curved action petals.
+        if (petalAlpha > 0.01f && baseOuterR > baseInnerR + dp(4f)) {
+            if (source == MicSource.WHISPER) {
+                val isCancelSelected = !isClosing && !isTrayTargeted && activeAction == RadialAction.CANCEL
+                val outerR = if (isCancelSelected) baseOuterR + dp(2f) else baseOuterR
+                val innerR = if (isCancelSelected) (baseInnerR - dp(1f)).coerceAtLeast(dp(8f)) else baseInnerR
+                buildRoundedArcPetalPath(
+                    cx = curCx,
+                    cy = curCy,
+                    innerR = innerR,
+                    outerR = outerR,
+                    startAngleDeg = 196f,
+                    sweepAngleDeg = 148f,
+                    cornerR = dp(14f),
+                    outPath = petalPath,
+                )
+                if (isCancelSelected) {
+                    petalFillPaint.color = withAlpha(PastelPalette.ROSE_DANGER, (0xFF * petalAlpha).roundToInt())
+                    petalTextPaint.color = withAlpha(PastelPalette.INK_ON_ROSE, (0xFF * petalAlpha).roundToInt())
+                } else {
+                    val idleAlpha = if (isLightBody) 0x18 else 0x14
+                    petalFillPaint.color = withAlpha(bodyInk, (idleAlpha * petalAlpha * trayDim).roundToInt())
+                    petalTextPaint.color = withAlpha(bodyInk, (0xDC * petalAlpha * trayDim).roundToInt())
                 }
-                canvas.drawPath(centerPath, centerHighlightPaint)
+                canvas.drawPath(petalPath, petalFillPaint)
+                drawPetalLabel(canvas, curCx, curCy, (innerR + outerR) * 0.5f, 90f, "取消")
             } else {
-                val index = RadialMenuGeometry.sectorIndex(currentAction)
-                if (index >= 0) {
-                    drawRingSector(
-                        canvas,
-                        anchorX,
-                        anchorY,
-                        innerR,
-                        currentR,
-                        RadialMenuGeometry.sectorCanvasStartAngle(index),
-                        RadialMenuGeometry.SECTOR_SWEEP_DEG,
-                        sectorHighlightPaint,
+                val sectorLabels = listOf("反驳", "指令", "截屏", "正式", "取消")
+                val gapDeg = 3.2f
+                for (index in 0 until RadialMenuGeometry.SECTOR_COUNT) {
+                    val sectorAction = RadialMenuGeometry.GEMMA_OUTER_SECTORS[index]
+                    val selected = !isClosing && !isTrayTargeted && RadialMenuGeometry.sectorIndex(activeAction) == index
+                    val outerR = if (selected) baseOuterR + dp(2.5f) else baseOuterR
+                    val innerR = if (selected) (baseInnerR - dp(1f)).coerceAtLeast(dp(8f)) else baseInnerR
+                    val startAngle = RadialMenuGeometry.sectorCanvasStartAngle(index) + gapDeg * 0.5f
+                    val sweepAngle = RadialMenuGeometry.SECTOR_SWEEP_DEG - gapDeg
+                    buildRoundedArcPetalPath(
+                        cx = curCx,
+                        cy = curCy,
+                        innerR = innerR,
+                        outerR = outerR,
+                        startAngleDeg = startAngle,
+                        sweepAngleDeg = sweepAngle,
+                        cornerR = dp(11f),
+                        outPath = petalPath,
+                    )
+                    when {
+                        selected && sectorAction == RadialAction.CANCEL -> {
+                            petalFillPaint.color = withAlpha(PastelPalette.ROSE_DANGER, (0xFF * petalAlpha).roundToInt())
+                            petalTextPaint.color = withAlpha(PastelPalette.INK_ON_ROSE, (0xFF * petalAlpha).roundToInt())
+                        }
+                        selected && isLightBody -> {
+                            petalFillPaint.color = withAlpha(PastelPalette.BG_CANVAS, (0xFF * petalAlpha).roundToInt())
+                            petalTextPaint.color = withAlpha(PastelPalette.TEXT_PRIMARY, (0xFF * petalAlpha).roundToInt())
+                        }
+                        selected -> {
+                            petalFillPaint.color = withAlpha(PastelPalette.PINK_LIGHT, (0xFF * petalAlpha).roundToInt())
+                            petalTextPaint.color = withAlpha(PastelPalette.INK_ON_PINK, (0xFF * petalAlpha).roundToInt())
+                        }
+                        else -> {
+                            val idleAlpha = if (isLightBody) 0x18 else 0x14
+                            petalFillPaint.color = withAlpha(bodyInk, (idleAlpha * petalAlpha * trayDim).roundToInt())
+                            petalTextPaint.color = withAlpha(bodyInk, (0xDC * petalAlpha * trayDim).roundToInt())
+                        }
+                    }
+                    canvas.drawPath(petalPath, petalFillPaint)
+                    drawPetalLabel(
+                        canvas = canvas,
+                        cx = curCx,
+                        cy = curCy,
+                        radius = (innerR + outerR) * 0.5f,
+                        angleDeg = RadialMenuGeometry.sectorMidAngle(index),
+                        text = sectorLabels[index],
                     )
                 }
             }
-        } else {
-            scratchRect.set(anchorX - innerR, anchorY - innerR, anchorX + innerR, anchorY + innerR)
-            val centerPath = Path().apply {
-                addArc(scratchRect, 180f, 180f)
-                close()
-            }
-            canvas.drawPath(centerPath, centerHighlightPaint)
+
+            // Default-mode caption in the upper-center heart below the petals.
+            val isCenterActive = !isClosing && !isTrayTargeted &&
+                activeAction == RadialMenuGeometry.centerActionFor(source)
+            val captionAlpha = ((if (isCenterActive) 0xCC else 0x66) * petalAlpha * trayDim).roundToInt()
+            centerCaptionPaint.color = withAlpha(bodyInk, captionAlpha)
+            val caption = if (source == MicSource.GEMMA) "普通纠错" else "普通识别"
+            val captionY = curCy - baseInnerR * 0.42f
+            val captionBaseline = captionY - (centerCaptionPaint.descent() + centerCaptionPaint.ascent()) / 2f
+            canvas.drawText(caption, curCx, captionBaseline, centerCaptionPaint)
         }
 
-        scratchRect.set(anchorX - innerR, anchorY - innerR, anchorX + innerR, anchorY + innerR)
-        canvas.drawArc(scratchRect, 180f, 180f, false, dividerPaint)
+        // Voice amplitude ripples & mic glyph anchored inside the lower-center heart.
+        val micGlyphHeight = computeMicGlyphHeight(gemmaBtnRect, p)
+        val glyphCx = lerp(btnRect.centerX(), curCx, clampedT * 0.25f)
+        val glyphCy = btnRect.centerY() - lerp(dp(6f), dp(4f), p) * clampedT
+        if (!isClosing && t > 0.1f) {
+            val rippleScale = if (isTrayTargeted) 0.22f else 0.55f
+            val r1 = micGlyphHeight * 0.72f + voiceAmplitude * dp(12f)
+            val r2 = micGlyphHeight * 0.96f + voiceAmplitude * dp(22f)
+            val a1 = ((0x32 + (voiceAmplitude * 0x36).roundToInt()) * rippleScale * clampedT).roundToInt()
+            val a2 = ((0x1A + (voiceAmplitude * 0x24).roundToInt()) * rippleScale * clampedT).roundToInt()
+            voiceRipplePaint.color = withAlpha(bodyInk, a1.coerceIn(0, 255))
+            canvas.drawCircle(glyphCx, glyphCy, r1, voiceRipplePaint)
+            voiceRipplePaint.color = withAlpha(bodyInk, a2.coerceIn(0, 255))
+            canvas.drawCircle(glyphCx, glyphCy, r2, voiceRipplePaint)
+        }
 
+        megaGlyphStrokePaint.color = bodyInk
+        megaGlyphFillPaint.color = bodyInk
         if (source == MicSource.WHISPER) {
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.78f, 90f, "取消")
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.30f, 90f, "普通识别")
+            drawScaledMicGlyph(
+                canvas = canvas,
+                cx = glyphCx,
+                centerY = glyphCy,
+                heightPx = micGlyphHeight,
+                strokePaint = megaGlyphStrokePaint,
+                fillPaint = megaGlyphFillPaint,
+            )
         } else {
-            for (index in 1 until RadialMenuGeometry.SECTOR_COUNT) {
-                val angle = 180f - RadialMenuGeometry.SECTOR_SWEEP_DEG * index
-                val (x1, y1) = RadialMenuGeometry.pointOnArc(anchorX, anchorY, innerR, angle)
-                val (x2, y2) = RadialMenuGeometry.pointOnArc(anchorX, anchorY, currentR, angle)
-                canvas.drawLine(x1, y1, x2, y2, dividerPaint)
-            }
-            val sectorLabels = listOf("反驳", "指令", "截屏", "正式", "取消")
-            sectorLabels.forEachIndexed { index, label ->
-                drawSectorLabel(
-                    canvas,
-                    anchorX,
-                    anchorY,
-                    currentR * 0.78f,
-                    RadialMenuGeometry.sectorMidAngle(index),
-                    label,
-                )
-            }
-            drawSectorLabel(canvas, anchorX, anchorY, currentR * 0.28f, 90f, "普通纠错")
+            drawAiMicContent(
+                canvas = canvas,
+                cx = glyphCx,
+                centerY = glyphCy,
+                topBound = btnRect.top,
+                glyphHeight = micGlyphHeight,
+                expandP = p,
+                strokePaint = megaGlyphStrokePaint,
+                fillPaint = megaGlyphFillPaint,
+                inkColor = bodyInk,
+                showCloud = onlineCloudVisible && !isLoaded,
+            )
         }
 
-        if (!isTrayTargeted) {
-            val hintText = when (currentAction) {
+        canvas.restore()
+
+        // Floating hint pill cleanly positioned above the arched canopy.
+        if (!isClosing && !isTrayTargeted && t > 0.35f) {
+            val hintText = when (activeAction) {
                 RadialAction.CANCEL -> "松手取消本次语音"
                 RadialAction.WHISPER_TRANSCRIBE -> if (source == MicSource.GEMMA) {
                     "正在聆听 · 普通纠错"
@@ -1373,53 +1518,180 @@ class VoiceImeOverlayView @JvmOverloads constructor(
                 RadialAction.GEMMA_SCREENSHOT_REBUTTAL -> "正在聆听 · 犀利反驳图中观点"
                 RadialAction.NONE -> "正在聆听..."
             }
-            val pillWidth = pillTextPaint.measureText(hintText) + dp(28f)
-            val pillCenterX = anchorX.coerceIn(pillWidth / 2f + dp(8f), width - pillWidth / 2f - dp(8f))
-            val pillBottom = (anchorY - currentR - dp(10f)).coerceAtLeast(dp(34f))
-            scratchRect.set(pillCenterX - pillWidth / 2f, pillBottom - dp(28f), pillCenterX + pillWidth / 2f, pillBottom)
-            canvas.drawRoundRect(scratchRect, dp(14f), dp(14f), pillBgPaint)
-            val textY = scratchRect.centerY() - (pillTextPaint.descent() + pillTextPaint.ascent()) / 2f
-            canvas.drawText(hintText, pillCenterX, textY, pillTextPaint)
+            val pillAlpha = ((t - 0.35f) / 0.45f).coerceIn(0f, 1f)
+            val pillWidth = hintPillTextPaint.measureText(hintText) + dp(28f)
+            val pillCenterX = curCx.coerceIn(pillWidth / 2f + dp(8f), width - pillWidth / 2f - dp(8f))
+            val pillBottom = (curCy - curR - dp(10f)).coerceAtLeast(dp(34f))
+            scratchRect.set(
+                pillCenterX - pillWidth / 2f,
+                pillBottom - dp(28f),
+                pillCenterX + pillWidth / 2f,
+                pillBottom,
+            )
+            val isCancelPill = activeAction == RadialAction.CANCEL
+            hintPillPaint.color = withAlpha(
+                if (isCancelPill) PastelPalette.ROSE_DANGER else PastelPalette.PILL_BG,
+                ((if (isCancelPill) 0xFF else 0xEE) * pillAlpha).roundToInt(),
+            )
+            hintPillTextPaint.color = withAlpha(
+                if (isCancelPill) PastelPalette.INK_ON_ROSE else PastelPalette.TEXT_PRIMARY,
+                (0xFF * pillAlpha).roundToInt(),
+            )
+            canvas.drawRoundRect(scratchRect, dp(14f), dp(14f), hintPillPaint)
+            val textY = scratchRect.centerY() - (hintPillTextPaint.descent() + hintPillTextPaint.ascent()) / 2f
+            canvas.drawText(hintText, pillCenterX, textY, hintPillTextPaint)
         }
-
-        val knobX = pointerX.coerceIn(dp(12f), (width - dp(12f)).coerceAtLeast(dp(12f)))
-        val knobY = pointerY.coerceIn(dp(12f), (height - dp(12f)).coerceAtLeast(dp(12f)))
-        val isDangerState = (isTrayTargeted && (
-            selectedTrayAction == DragAppAction.UNLOAD_WHISPER ||
-                selectedTrayAction == DragAppAction.UNLOAD_GEMMA
-            )) || (!isTrayTargeted && currentAction == RadialAction.CANCEL)
-        amplitudeRingPaint.color = if (isDangerState) {
-            PastelPalette.AMPLITUDE_RING_CANCEL
-        } else {
-            PastelPalette.AMPLITUDE_RING
-        }
-        val pulseR = knobRadiusPx + dp(6f) + voiceAmplitude * dp(18f)
-        canvas.drawCircle(knobX, knobY, pulseR, amplitudeRingPaint)
-        canvas.drawCircle(knobX, knobY, knobRadiusPx, knobFillPaint(source))
-        drawMicIcon(canvas, knobX, knobY, source == MicSource.GEMMA, isDanger = isDangerState)
     }
 
-    private fun drawRingSector(
-        canvas: Canvas,
+    /**
+     * Traces a C1-continuous closed silhouette from the pressed mic button's rounded rectangle
+     * (`t = 0`) up into the arched streamlined mega-button (`t = 1`).
+     */
+    private fun buildStreamlinedButtonPath(
+        btnRect: RectF,
+        cornerR: Float,
+        layout: StreamlinedCanopyLayout,
+        t: Float,
+        outPath: Path,
+    ) {
+        outPath.reset()
+        val flatBlend = t.coerceIn(0f, 1f)
+        val btnCx = btnRect.centerX()
+        val halfW = btnRect.width() * 0.5f
+        val r = cornerR.coerceAtMost(minOf(btnRect.width(), btnRect.height()) * 0.5f)
+        val baseFlatHalfW = (halfW - r).coerceAtLeast(0f)
+
+        val curCx = lerp(btnCx, layout.domeCx, flatBlend)
+        val curCy = lerp(btnRect.top + r, layout.domeCy, t)
+        val curFlatHalfW = lerp(baseFlatHalfW, 0f, flatBlend)
+        val curArchR = lerp(r, layout.canopyRadius, t).coerceAtLeast(r)
+        val stemY = btnRect.bottom - r
+        val dy = (stemY - curCy).coerceAtLeast(0f)
+        val leftShoulderX = curCx - curFlatHalfW - curArchR
+        val rightShoulderX = curCx + curFlatHalfW + curArchR
+
+        outPath.moveTo(btnRect.left, stemY)
+        outPath.cubicTo(
+            btnRect.left,
+            stemY - dy * 0.56f,
+            leftShoulderX,
+            curCy + dy * 0.62f,
+            leftShoulderX,
+            curCy,
+        )
+
+        val leftDomeCx = curCx - curFlatHalfW
+        petalScratchRect.set(
+            leftDomeCx - curArchR,
+            curCy - curArchR,
+            leftDomeCx + curArchR,
+            curCy + curArchR,
+        )
+        outPath.arcTo(petalScratchRect, 180f, 90f, false)
+
+        if (curFlatHalfW > 0.5f) {
+            outPath.lineTo(curCx + curFlatHalfW, curCy - curArchR)
+        }
+
+        val rightDomeCx = curCx + curFlatHalfW
+        petalScratchRect.set(
+            rightDomeCx - curArchR,
+            curCy - curArchR,
+            rightDomeCx + curArchR,
+            curCy + curArchR,
+        )
+        outPath.arcTo(petalScratchRect, 270f, 90f, false)
+
+        outPath.cubicTo(
+            rightShoulderX,
+            curCy + dy * 0.62f,
+            btnRect.right,
+            stemY - dy * 0.56f,
+            btnRect.right,
+            stemY,
+        )
+
+        petalScratchRect.set(
+            btnRect.right - r * 2f,
+            btnRect.bottom - r * 2f,
+            btnRect.right,
+            btnRect.bottom,
+        )
+        outPath.arcTo(petalScratchRect, 0f, 90f, false)
+        outPath.lineTo(btnRect.left + r, btnRect.bottom)
+        petalScratchRect.set(
+            btnRect.left,
+            btnRect.bottom - r * 2f,
+            btnRect.left + r * 2f,
+            btnRect.bottom,
+        )
+        outPath.arcTo(petalScratchRect, 90f, 90f, false)
+        outPath.close()
+    }
+
+    /**
+     * Traces a concentric curved ring-sector petal with 4 smooth [Path.quadTo] rounded corners.
+     * Angles follow Canvas convention (`180°` = left, `270°` = top, `360°` = right).
+     */
+    private fun buildRoundedArcPetalPath(
         cx: Float,
         cy: Float,
         innerR: Float,
         outerR: Float,
         startAngleDeg: Float,
         sweepAngleDeg: Float,
-        paint: Paint,
+        cornerR: Float,
+        outPath: Path,
     ) {
-        val outerRect = RectF(cx - outerR, cy - outerR, cx + outerR, cy + outerR)
-        val innerRect = RectF(cx - innerR, cy - innerR, cx + innerR, cy + innerR)
-        val path = Path().apply {
-            arcTo(outerRect, startAngleDeg, sweepAngleDeg, true)
-            arcTo(innerRect, startAngleDeg + sweepAngleDeg, -sweepAngleDeg, false)
-            close()
-        }
-        canvas.drawPath(path, paint)
+        outPath.reset()
+        val r = cornerR.coerceAtMost(((outerR - innerR) * 0.45f).coerceAtLeast(0f))
+        val a0 = startAngleDeg
+        val a1 = startAngleDeg + sweepAngleDeg
+        val outerInsetDeg = ((r / outerR.coerceAtLeast(1f)) * (180f / PI.toFloat()))
+            .coerceAtMost(sweepAngleDeg * 0.35f)
+        val innerInsetDeg = ((r / innerR.coerceAtLeast(1f)) * (180f / PI.toFloat()))
+            .coerceAtMost(sweepAngleDeg * 0.35f)
+
+        fun ptX(rad: Float, deg: Float): Float = cx + rad * cos(deg * PI / 180.0).toFloat()
+        fun ptY(rad: Float, deg: Float): Float = cy + rad * sin(deg * PI / 180.0).toFloat()
+
+        petalScratchRect.set(cx - outerR, cy - outerR, cx + outerR, cy + outerR)
+        outPath.arcTo(petalScratchRect, a0 + outerInsetDeg, sweepAngleDeg - outerInsetDeg * 2f, true)
+
+        outPath.quadTo(
+            ptX(outerR, a1),
+            ptY(outerR, a1),
+            ptX(outerR - r, a1),
+            ptY(outerR - r, a1),
+        )
+        outPath.lineTo(ptX(innerR + r, a1), ptY(innerR + r, a1))
+        outPath.quadTo(
+            ptX(innerR, a1),
+            ptY(innerR, a1),
+            ptX(innerR, a1 - innerInsetDeg),
+            ptY(innerR, a1 - innerInsetDeg),
+        )
+
+        petalScratchRect.set(cx - innerR, cy - innerR, cx + innerR, cy + innerR)
+        outPath.arcTo(petalScratchRect, a1 - innerInsetDeg, -(sweepAngleDeg - innerInsetDeg * 2f), false)
+
+        outPath.quadTo(
+            ptX(innerR, a0),
+            ptY(innerR, a0),
+            ptX(innerR + r, a0),
+            ptY(innerR + r, a0),
+        )
+        outPath.lineTo(ptX(outerR - r, a0), ptY(outerR - r, a0))
+        outPath.quadTo(
+            ptX(outerR, a0),
+            ptY(outerR, a0),
+            ptX(outerR, a0 + outerInsetDeg),
+            ptY(outerR, a0 + outerInsetDeg),
+        )
+        outPath.close()
     }
 
-    private fun drawSectorLabel(
+    private fun drawPetalLabel(
         canvas: Canvas,
         cx: Float,
         cy: Float,
@@ -1428,8 +1700,8 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         text: String,
     ) {
         val (x, y) = RadialMenuGeometry.pointOnArc(cx, cy, radius, angleDeg)
-        val textY = y - (sectorTextPaint.descent() + sectorTextPaint.ascent()) / 2f
-        canvas.drawText(text, x, textY, sectorTextPaint)
+        val textY = y - (petalTextPaint.descent() + petalTextPaint.ascent()) / 2f
+        canvas.drawText(text, x, textY, petalTextPaint)
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -1500,6 +1772,7 @@ class VoiceImeOverlayView @JvmOverloads constructor(
                     pointerY = y
                     if (pointerY > trayActivationY() && trayActions.isNotEmpty()) {
                         isTrayTargeted = true
+                        animateCancelBlend(0f)
                         val picked = selectTrayActionAt(x, y)
                         if (picked != selectedTrayAction) {
                             selectedTrayAction = picked
@@ -1520,15 +1793,15 @@ class VoiceImeOverlayView @JvmOverloads constructor(
                         anchorY = anchorY,
                         pointerX = pointerX,
                         pointerY = pointerY,
-                        radius = radialRadiusPx,
+                        radius = activeCanopyRadius,
                         source = src,
                         bottomGracePx = dp(12f),
                     )
                     if (eval.action != currentAction) {
                         currentAction = eval.action
                         performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        animateCancelBlend(if (eval.action == RadialAction.CANCEL) 1f else 0f)
                     }
-                    currentDistanceRatio = eval.distanceRatio
                     onRadialOverlayInvalidate?.invoke()
                     invalidate()
                     return true
@@ -1629,29 +1902,57 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         panelAnimator?.cancel()
         heightSwitchAnimator?.cancel()
         radialAnimator?.cancel()
+        cancelBlendAnimator?.cancel()
+        closingSource = null
+        closingCanopyLayout = null
         super.onDetachedFromWindow()
     }
 
+    private fun animateCancelBlend(target: Float) {
+        val clampedTarget = target.coerceIn(0f, 1f)
+        if (abs(clampedTarget - cancelBlend) < 0.01f) {
+            cancelBlend = clampedTarget
+            return
+        }
+        cancelBlendAnimator?.cancel()
+        cancelBlendAnimator = ValueAnimator.ofFloat(cancelBlend, clampedTarget).apply {
+            duration = 140L
+            interpolator = PathInterpolator(0.4f, 0f, 0.2f, 1f)
+            addUpdateListener { anim ->
+                cancelBlend = anim.animatedValue as Float
+                onRadialOverlayInvalidate?.invoke()
+                invalidate()
+            }
+            start()
+        }
+    }
+
     private fun beginRadialSession(source: MicSource, downX: Float, downY: Float) {
+        radialAnimator?.cancel()
+        cancelBlendAnimator?.cancel()
+        closingSource = null
+        closingCanopyLayout = null
+        closingAction = RadialAction.NONE
+        cancelBlend = 0f
+
         activeSource = source
         prepareTray(source)
-        val minAnchorX = radialRadiusPx + dp(8f)
-        val maxAnchorX = (width - radialRadiusPx - dp(8f)).coerceAtLeast(minAnchorX)
-        anchorX = downX.coerceIn(minAnchorX, maxAnchorX)
-        anchorY = barCardRect.top - dp(4f)
+        val layout = computeCanopyLayout(source)
+        activeCanopyLayout = layout
+        anchorX = layout.domeCx
+        anchorY = layout.domeCy
+        activeCanopyRadius = layout.canopyRadius
         pointerX = downX
         pointerY = downY
         currentAction = RadialMenuGeometry.centerActionFor(source)
-        currentDistanceRatio = 0f
         isRadialExpanded = true
         voiceAmplitude = 0f
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         listener?.onTouchableRegionChanged()
 
-        radialAnimator?.cancel()
-        radialAnimator = ValueAnimator.ofFloat(0.25f, 1f).apply {
-            duration = 160L
-            interpolator = DecelerateInterpolator()
+        radialAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 210L
+            interpolator = OvershootInterpolator(0.35f)
             addUpdateListener { anim ->
                 expandProgress = anim.animatedValue as Float
                 onRadialOverlayInvalidate?.invoke()
@@ -1663,18 +1964,63 @@ class VoiceImeOverlayView @JvmOverloads constructor(
 
     private fun endRadialSession() {
         radialAnimator?.cancel()
-        expandProgress = 0f
+        val src = activeSource
+        val layout = activeCanopyLayout
+        val finalAction = currentAction
+        val startProgress = expandProgress
+
         isRadialExpanded = false
-        val wasActive = activeSource != null
         activeSource = null
+        activeCanopyLayout = null
         currentAction = RadialAction.NONE
         voiceAmplitude = 0f
         clearTray()
-        onRadialOverlayInvalidate?.invoke()
-        if (wasActive) {
+        if (src != null) {
             listener?.onTouchableRegionChanged()
         }
-        invalidate()
+
+        if (src != null && layout != null && startProgress > 0.02f) {
+            closingSource = src
+            closingCanopyLayout = layout
+            closingAction = finalAction
+            radialAnimator = ValueAnimator.ofFloat(startProgress, 0f).apply {
+                duration = 135L
+                interpolator = PathInterpolator(0.4f, 0f, 0.2f, 1f)
+                addUpdateListener { anim ->
+                    expandProgress = anim.animatedValue as Float
+                    onRadialOverlayInvalidate?.invoke()
+                    invalidate()
+                }
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        closingSource = null
+                        closingCanopyLayout = null
+                        closingAction = RadialAction.NONE
+                        expandProgress = 0f
+                        cancelBlend = 0f
+                        onRadialOverlayInvalidate?.invoke()
+                        invalidate()
+                    }
+
+                    override fun onAnimationCancel(animation: Animator) {
+                        closingSource = null
+                        closingCanopyLayout = null
+                        closingAction = RadialAction.NONE
+                        expandProgress = 0f
+                        cancelBlend = 0f
+                    }
+                })
+                start()
+            }
+        } else {
+            closingSource = null
+            closingCanopyLayout = null
+            closingAction = RadialAction.NONE
+            expandProgress = 0f
+            cancelBlend = 0f
+            onRadialOverlayInvalidate?.invoke()
+            invalidate()
+        }
     }
 
     private fun drawBackspaceIcon(canvas: Canvas, cx: Float, cy: Float) {
@@ -1695,32 +2041,6 @@ class VoiceImeOverlayView @JvmOverloads constructor(
         val r = dp(2.6f)
         canvas.drawLine(crossCenterX - r, cy - r, crossCenterX + r, cy + r, iconPaint)
         canvas.drawLine(crossCenterX - r, cy + r, crossCenterX + r, cy - r, iconPaint)
-    }
-
-    private fun drawMicIcon(canvas: Canvas, cx: Float, cy: Float, sparkle: Boolean, isDanger: Boolean = false) {
-        val stroke = if (isDanger) roseIconPaint else iconDarkPaint
-        val fill = if (isDanger) roseIconFillPaint else iconDarkFillPaint
-        val capsuleW = dp(6f)
-        val capsuleH = dp(10f)
-        scratchRect.set(
-            cx - capsuleW / 2f,
-            cy - capsuleH / 2f - dp(2f),
-            cx + capsuleW / 2f,
-            cy + capsuleH / 2f - dp(2f),
-        )
-        canvas.drawRoundRect(scratchRect, capsuleW / 2f, capsuleW / 2f, fill)
-
-        scratchRect.set(cx - dp(6f), cy - dp(5f), cx + dp(6f), cy + dp(6f))
-        canvas.drawArc(scratchRect, 0f, 180f, false, stroke)
-        canvas.drawLine(cx, cy + dp(6f), cx, cy + dp(9.5f), stroke)
-        canvas.drawLine(cx - dp(3.5f), cy + dp(9.5f), cx + dp(3.5f), cy + dp(9.5f), stroke)
-
-        if (sparkle) {
-            val sx = cx + dp(7.5f)
-            val sy = cy - dp(7.5f)
-            canvas.drawLine(sx - dp(2.2f), sy, sx + dp(2.2f), sy, stroke)
-            canvas.drawLine(sx, sy - dp(2.2f), sx, sy + dp(2.2f), stroke)
-        }
     }
 
     private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t

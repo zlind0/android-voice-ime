@@ -40,6 +40,12 @@ data class RadialEvaluation(
     val angleDegrees: Float,
 )
 
+data class StreamlinedCanopyLayout(
+    val domeCx: Float,
+    val domeCy: Float,
+    val canopyRadius: Float,
+)
+
 /**
  * Pure geometry solver for the expandable radial semicircle menu anchored above the pressed mic
  * button.
@@ -188,5 +194,45 @@ object RadialMenuGeometry {
             if (!gemmaLoaded) add(DragAppAction.LOAD_GEMMA_GPU)
             if (gemmaLoaded) add(DragAppAction.UNLOAD_GEMMA)
         }
+    }
+
+    /**
+     * Resolves the upper canopy center and radius for the streamlined morphing voice button so
+     * that pressing anywhere inside the idle mic button starts safely inside [CENTER_ZONE_RATIO]
+     * while fitting cleanly inside `[margin, viewWidth - margin]`.
+     */
+    fun resolveCanopyLayout(
+        source: MicSource,
+        btnLeft: Float,
+        btnTop: Float,
+        btnRight: Float,
+        viewWidth: Float,
+        panelExpandProgress: Float,
+        density: Float,
+    ): StreamlinedCanopyLayout {
+        val dp = { value: Float -> value * density }
+        val btnWidth = (btnRight - btnLeft).coerceAtLeast(1f)
+        val btnCx = (btnLeft + btnRight) * 0.5f
+        val p = panelExpandProgress.coerceIn(0f, 1f)
+
+        val baseRadius = when (source) {
+            MicSource.GEMMA -> dp(136f) + (dp(128f) - dp(136f)) * p
+            MicSource.WHISPER -> dp(114f) + (dp(104f) - dp(114f)) * p
+        }
+        val minSafeRadius = (btnWidth * 0.5f + dp(16f)) / CENTER_ZONE_RATIO
+        val margin = dp(10f)
+        val maxFitRadius = ((viewWidth - margin * 2f) * 0.5f).coerceAtLeast(dp(64f))
+        val canopyRadius = maxOf(baseRadius, minSafeRadius).coerceAtMost(maxFitRadius)
+
+        val minCx = canopyRadius + margin
+        val maxCx = (viewWidth - canopyRadius - margin).coerceAtLeast(minCx)
+        val domeCx = btnCx.coerceIn(minCx, maxCx)
+        val domeCy = btnTop - (dp(4f) + (dp(20f) - dp(4f)) * p)
+
+        return StreamlinedCanopyLayout(
+            domeCx = domeCx,
+            domeCy = domeCy,
+            canopyRadius = canopyRadius,
+        )
     }
 }
